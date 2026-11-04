@@ -1,0 +1,1928 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#f2f2f7" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)">
+<title>Aerial 屏幕时间</title>
+<!--
+  Prototype. Mock data, no server, every control live.
+  Tokens, .list/.item/.switch/.sheet and the KEYS+TEXTS i18n shape mirror
+  app/src/main/assets/web/index.html so this can merge in as a fourth tab.
+  Production: flatten TEXT_TABLE into KEYS plus index-aligned arrays, add ru/uk/kk.
+-->
+<style>
+  :root {
+    --bg: #f2f2f7; --card: #ffffff; --label: #000; --secondary: rgba(60,60,67,.6); --tertiary: rgba(60,60,67,.3);
+    --sep: rgba(60,60,67,.18); --tint: #007aff; --fill: rgba(118,118,128,.12); --danger: #ff3b30;
+    --ok: #34c759; --warn: #ff9f0a;
+    --bar: rgba(249,249,249,.82); --bar-line: rgba(0,0,0,.14); --scrim: rgba(0,0,0,.32); --sheet: #f2f2f7;
+    --ease-out: cubic-bezier(.23,1,.32,1); --ease-drawer: cubic-bezier(.32,.72,0,1);
+    --tabbar: calc(50px + env(safe-area-inset-bottom));
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #000; --card: #1c1c1e; --label: #fff; --secondary: rgba(235,235,245,.6); --tertiary: rgba(235,235,245,.3);
+      --sep: rgba(84,84,88,.6); --tint: #0a84ff; --fill: rgba(118,118,128,.24); --danger: #ff453a;
+      --bar: rgba(22,22,22,.82); --bar-line: rgba(255,255,255,.12); --scrim: rgba(0,0,0,.5); --sheet: #1c1c1e;
+    }
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html { -webkit-text-size-adjust: 100%; }
+  body {
+    margin: 0; background: var(--bg); color: var(--label);
+    font: 17px/1.35 -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "HarmonyOS Sans SC", "MiSans", system-ui, sans-serif;
+  }
+  button { font: inherit; color: inherit; }
+  [hidden] { display: none !important; }
+
+  main { max-width: 720px; margin: 0 auto; padding: env(safe-area-inset-top) 16px calc(var(--tabbar) + 32px); }
+  main.selecting { padding-bottom: calc(var(--tabbar) + 104px); }
+  header { padding: 28px 4px 4px; position: relative; }
+  header h1 { font-size: 34px; font-weight: 700; letter-spacing: -.02em; margin: 0; }
+  header p { margin: 3px 0 0; color: var(--secondary); font-size: 15px; display: flex; align-items: center; gap: 6px; }
+  header .act { position: absolute; right: 0; top: 30px; font-size: 15px; }
+  .live { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); flex-shrink: 0; box-shadow: 0 0 0 0 rgba(52,199,89,.5); animation: live 2.4s infinite; }
+  @keyframes live { 0% { box-shadow: 0 0 0 0 rgba(52,199,89,.45); } 70% { box-shadow: 0 0 0 6px rgba(52,199,89,0); } 100% { box-shadow: 0 0 0 0 rgba(52,199,89,0); } }
+
+  h2 { font-size: 12px; font-weight: 400; color: var(--secondary); margin: 26px 16px 7px; text-transform: uppercase; letter-spacing: .05em; }
+  .foot { color: var(--secondary); font-size: 13px; margin: 8px 16px 0; }
+  section > .list:first-child, section > .card:first-child { margin-top: 14px; }
+
+  .list { background: var(--card); border-radius: 12px; overflow: hidden; }
+  .item {
+    position: relative; display: flex; align-items: center; gap: 12px; width: 100%; min-height: 48px; padding: 11px 16px;
+    border: 0; background: none; text-align: left; transition: background-color .2s ease;
+  }
+  .item + .item::before { content: ""; position: absolute; top: 0; left: 16px; right: 0; height: .5px; background: var(--sep); }
+  .item.hasicon + .item::before { left: 66px; }
+  button.item:active, label.item:active { background: var(--fill); transition-duration: 0s; }
+  .item .txt { flex: 1; min-width: 0; }
+  .item .sub { display: block; font-size: 13px; color: var(--secondary); margin-top: 2px; }
+  .item .val { color: var(--secondary); white-space: nowrap; font-size: 16px; }
+  .item .chev { color: var(--tertiary); flex-shrink: 0; }
+  .item.tint { color: var(--tint); }
+  .item.danger { color: var(--danger); }
+  .item .val, .item .pill { flex-shrink: 0; }
+  .item.on { background: var(--fill); }
+  .tick { color: var(--tint); flex-shrink: 0; opacity: 0; transform: scale(.8); transition: opacity .15s ease, transform .2s var(--ease-out); }
+  [aria-checked="true"] .tick { opacity: 1; transform: none; }
+  .switch {
+    appearance: none; -webkit-appearance: none; position: relative; flex-shrink: 0; width: 51px; height: 31px; margin: 0;
+    border-radius: 16px; background: var(--fill); cursor: pointer; transition: background-color .2s ease;
+  }
+  .switch::after {
+    content: ""; position: absolute; top: 2px; left: 2px; width: 27px; height: 27px; border-radius: 50%; background: #fff;
+    box-shadow: 0 3px 8px rgba(0,0,0,.15), 0 1px 1px rgba(0,0,0,.16); transition: transform .25s var(--ease-out);
+  }
+  .switch:checked { background: var(--ok); }
+  .switch:checked::after { transform: translateX(20px); }
+  .btn {
+    display: flex; align-items: center; justify-content: center; gap: 6px; width: 100%; padding: 14px; border: 0; border-radius: 12px;
+    background: var(--tint); color: #fff; font-weight: 600; cursor: pointer; font-size: 17px;
+    transition: transform .16s var(--ease-out), opacity .2s ease;
+  }
+  .btn:active { transform: scale(.97); }
+  .btn[disabled] { opacity: .4; pointer-events: none; }
+  .btn.plain { background: var(--card); color: var(--tint); }
+  .row { display: flex; gap: 10px; margin-top: 14px; }
+  .row .btn { flex: 1; }
+  .link { appearance: none; border: 0; background: none; color: var(--tint); padding: 0; cursor: pointer; font-weight: 600; font-size: 17px; }
+  .link.sm { font-size: 15px; font-weight: 500; }
+  .empty { color: var(--secondary); font-size: 15px; padding: 16px; margin: 0; }
+
+  /* Time card. */
+  .card { background: var(--card); border-radius: 16px; padding: 18px; }
+  .card + .card { margin-top: 14px; }
+  .card h3 { margin: 0 0 10px; font-size: 13px; font-weight: 400; color: var(--secondary); text-transform: uppercase; letter-spacing: .05em; }
+  .ringwrap { display: flex; align-items: center; gap: 18px; }
+  .ringbox { position: relative; width: 116px; height: 116px; flex-shrink: 0; }
+  .ring { width: 116px; height: 116px; transform: rotate(-90deg); }
+  .ring circle { fill: none; stroke-width: 10; stroke-linecap: round; }
+  .ring .bgc { stroke: var(--fill); }
+  .ring .fgc { transition: stroke-dashoffset .7s var(--ease-out), stroke .3s ease; }
+  .ringpct { position: absolute; inset: 0; display: grid; place-items: center; font-size: 21px; font-weight: 700; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+  .ringnum { flex: 1; min-width: 0; }
+  .ringnum b { display: block; font-size: 25px; font-weight: 700; letter-spacing: -.02em; line-height: 1.2; }
+  .ringnum b small { font-size: 15px; font-weight: 500; color: var(--secondary); margin-left: 3px; }
+  .ringnum .of { display: block; color: var(--secondary); font-size: 14px; margin-top: 3px; }
+  .state { display: inline-flex; align-items: center; gap: 5px; margin-top: 10px; font-size: 14px; font-weight: 600; }
+  .quick { display: flex; gap: 8px; margin-top: 18px; }
+  .quick .btn { flex: 1; padding: 11px 0; font-size: 16px; border-radius: 11px; background: var(--fill); color: var(--tint); }
+
+  .bar { height: 6px; border-radius: 3px; background: var(--fill); overflow: hidden; margin-top: 7px; }
+  .bar i { display: block; height: 100%; border-radius: 3px; transition: width .5s var(--ease-out); }
+  .pill { font-size: 11.5px; font-weight: 600; padding: 3px 8px; border-radius: 20px; background: var(--fill); color: var(--secondary); white-space: nowrap; }
+  .pill.ok { background: rgba(52,199,89,.16); color: #248a3d; }
+  .pill.warn { background: rgba(255,159,10,.18); color: #b25000; }
+  .pill.over { background: rgba(255,59,48,.16); color: var(--danger); }
+  @media (prefers-color-scheme: dark) { .pill.ok { color: #30d158; } .pill.warn { color: #ffa42a; } }
+
+  .icon-sq { width: 38px; height: 38px; border-radius: 9px; color: #fff; display: grid; place-items: center; flex-shrink: 0; font-size: 16px; font-weight: 600; }
+  .gicon { width: 42px; height: 42px; border-radius: 11px; display: grid; place-items: center; flex-shrink: 0; color: #fff; font-weight: 700; font-size: 16px; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+
+  /* Chart. */
+  .chart { display: flex; align-items: flex-end; gap: 8px; height: 104px; }
+  .chart .col { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 7px; height: 100%; justify-content: flex-end; }
+  .chart .stem { width: 100%; max-width: 24px; border-radius: 5px 5px 2px 2px; background: var(--fill); transition: height .5s var(--ease-out); }
+  .chart .col.today .stem { background: var(--tint); }
+  .chart .lab { font-size: 11px; color: var(--secondary); }
+  .chart .col.today .lab { color: var(--tint); font-weight: 700; }
+
+  /* Tabs. */
+  nav {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 10; height: var(--tabbar); padding-bottom: env(safe-area-inset-bottom);
+    display: flex; justify-content: center; background: var(--bar); box-shadow: 0 -.5px 0 var(--bar-line);
+    -webkit-backdrop-filter: saturate(180%) blur(20px); backdrop-filter: saturate(180%) blur(20px);
+  }
+  nav button {
+    flex: 1; max-width: 160px; border: 0; background: none; padding: 6px 0 0; color: var(--secondary);
+    display: flex; flex-direction: column; align-items: center; gap: 2px; font-size: 10.5px; font-weight: 500; cursor: pointer;
+  }
+  nav button svg { transition: transform .16s var(--ease-out); }
+  nav button:active svg { transform: scale(.88); }
+  nav button[aria-selected="true"] { color: var(--tint); }
+
+  /* Chips, search, controls. */
+  .chips { display: flex; gap: 8px; overflow-x: auto; padding: 12px 2px 2px; margin: 0 -2px; scrollbar-width: none; }
+  .chips::-webkit-scrollbar { display: none; }
+  .chip { flex-shrink: 0; border: 0; border-radius: 18px; padding: 7px 14px; background: var(--card); color: var(--secondary); font-size: 14px; font-weight: 500; cursor: pointer; transition: background-color .2s ease, color .2s ease; }
+  .chip[aria-pressed="true"] { background: var(--label); color: var(--bg); }
+  .chip.wk { width: 38px; height: 38px; padding: 0; display: grid; place-items: center; border-radius: 50%; font-size: 15px; }
+  .chip:disabled { opacity: .35; }
+  .swatch { width: 34px; height: 34px; padding: 0; border-radius: 50%; border: 0; cursor: pointer; }
+  .search { display: flex; align-items: center; gap: 8px; background: var(--fill); border-radius: 10px; padding: 9px 11px; margin-top: 14px; color: var(--secondary); }
+  .search input { flex: 1; min-width: 0; font: inherit; font-size: 16px; color: var(--label); background: none; border: 0; outline: none; padding: 0; }
+  .search input::placeholder { color: var(--tertiary); }
+  .search .link { font-size: 15px; }
+  input[type=time] { font: inherit; font-size: 17px; color: var(--tint); background: none; border: 0; outline: none; text-align: right; font-variant-numeric: tabular-nums; }
+  input[type=time]:disabled { color: var(--tertiary); }
+  .field input { flex: 1; min-width: 0; font: inherit; font-size: 17px; color: var(--label); background: none; border: 0; outline: none; padding: 0; }
+  .stepper { display: flex; align-items: center; gap: 2px; background: var(--fill); border-radius: 9px; padding: 2px; flex-shrink: 0; }
+  .stepper button { width: 32px; height: 28px; border: 0; border-radius: 7px; background: var(--card); color: var(--label); font-size: 17px; line-height: 1; cursor: pointer; }
+  .stepper b { min-width: 44px; text-align: center; font-size: 15px; font-variant-numeric: tabular-nums; }
+  .box { width: 24px; height: 24px; border-radius: 50%; flex-shrink: 0; background: var(--fill); box-shadow: inset 0 0 0 1.5px var(--tertiary); display: grid; place-items: center; transition: background-color .15s ease, box-shadow .15s ease; }
+  .box.on { background: var(--tint); box-shadow: none; }
+  .box.on::after { content: ""; width: 6px; height: 11px; border: solid #fff; border-width: 0 2.2px 2.2px 0; transform: rotate(45deg) translate(-1px,-1px); }
+  .tnum { font-variant-numeric: tabular-nums; }
+
+  /* Free-form duration: hours and minutes, not a shelf of presets. */
+  .dprev { text-align: center; font-size: 26px; font-weight: 700; letter-spacing: -.02em; margin: 16px 0 0; font-variant-numeric: tabular-nums; }
+  .dur { display: flex; justify-content: center; gap: 26px; margin: 12px 0 4px; }
+  .dg { display: flex; flex-direction: column; align-items: center; gap: 7px; }
+  .dg .r { display: flex; align-items: center; gap: 6px; }
+  .dg .u { font-size: 13px; color: var(--secondary); }
+  .dg input { width: 58px; text-align: center; font: inherit; font-size: 28px; font-weight: 700; color: var(--label);
+    background: var(--fill); border: 0; border-radius: 11px; padding: 5px 0; font-variant-numeric: tabular-nums; }
+  .dg input::-webkit-outer-spin-button, .dg input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+  .dg input { -moz-appearance: textfield; appearance: textfield; }
+  .dg input:disabled { opacity: .3; }
+  .dg input:focus { outline: 2px solid var(--tint); outline-offset: 1px; }
+  .arrow { width: 38px; height: 38px; border: 0; border-radius: 11px; background: var(--fill); color: var(--tint);
+    font-size: 20px; line-height: 1; cursor: pointer; display: grid; place-items: center; -webkit-user-select: none; user-select: none; touch-action: manipulation; }
+  .arrow:active { background: var(--sep); transform: scale(.93); }
+  .arrow[disabled] { opacity: .3; pointer-events: none; }
+
+  /* Version bank (APK upgrades). Households read this page, so the copy is Chinese-first;
+     nothing here loads a font, an icon set or a script from the network. */
+  #vercards { display: flex; gap: 12px; align-items: stretch; margin-top: 14px; }
+  #vercards .card { flex: 1; min-width: 0; }
+  #vercards .card + .card { margin-top: 0; }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-variant-numeric: tabular-nums; }
+  .verrow { align-items: flex-start; flex-wrap: wrap; padding: 13px 16px; }
+  .verrow .txt { flex: 1 1 200px; }
+  .verrow .fchip { width: 62px; text-align: center; margin-top: 2px; }
+  .vermeta { display: flex; flex-wrap: wrap; align-items: center; gap: 5px 8px; margin-top: 4px; font-size: 12.5px; color: var(--secondary); }
+  .vacts { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-top: 9px; }
+  .vacts .link.sm { font-size: 14px; }
+  .link.dngr { color: var(--danger); }
+  details.notes { margin-top: 7px; }
+  details.notes > summary { font-size: 13px; color: var(--tint); cursor: pointer; list-style: none; }
+  details.notes > summary::-webkit-details-marker { display: none; }
+  details.notes > summary::before { content: "› "; display: inline-block; transition: transform .2s var(--ease-out); }
+  details.notes[open] > summary::before { transform: rotate(90deg) translateX(-2px); }
+  details.notes p { margin: 5px 0 0; font-size: 13px; color: var(--secondary); white-space: pre-wrap; }
+  .verfail { display: flex; align-items: center; gap: 12px; margin: 0 0 10px; padding: 10px 14px; border-radius: 12px;
+    background: rgba(255,59,48,.1); color: var(--danger); font-size: 13px; }
+  .verfail .link { margin-left: auto; font-size: 14px; white-space: nowrap; }
+
+  /* Sheet. */
+  .sheet-wrap { position: fixed; inset: 0; z-index: 20; }
+  .scrim { position: absolute; inset: 0; background: var(--scrim); opacity: 0; transition: opacity .2s ease; }
+  .sheet {
+    max-height: calc(100% - env(safe-area-inset-top) - 24px); overflow-y: auto; overscroll-behavior: contain;
+    position: absolute; left: 0; right: 0; bottom: 0; max-width: 520px; margin: 0 auto; background: var(--sheet);
+    border-radius: 14px 14px 0 0; padding: 8px 16px calc(16px + env(safe-area-inset-bottom));
+    transform: translateY(100%); transition: transform .2s var(--ease-out);
+  }
+  .sheet-wrap.open .scrim { opacity: 1; transition-duration: .3s; }
+  .sheet-wrap.open .sheet { transform: none; transition: transform .38s var(--ease-drawer); }
+  .grab { width: 36px; height: 5px; border-radius: 3px; background: var(--tertiary); margin: 0 auto 12px; }
+  .sheet h3 { text-align: center; font-size: 17px; font-weight: 600; margin: 4px 0 2px; }
+  .sheet .meta { text-align: center; font-size: 13px; color: var(--secondary); margin: 2px 0 16px; }
+  .sheet .list { background: var(--card); }
+  @media (prefers-color-scheme: dark) { .sheet .list { background: #2c2c2e; } }
+  .sheet .list + .list { margin-top: 10px; }
+  .sheet h2 { margin-left: 4px; }
+  .sheet .row { margin-top: 12px; }
+  .sheet .foot { margin: 10px 4px 0; }
+  .shead { display: flex; justify-content: center; margin-bottom: 8px; }
+
+  /* Confirmation. This used to be window.confirm(), and browsers stop showing native dialogs
+     after a few of them (Edge and Chrome both offer "prevent this page from creating additional
+     dialogs"). Once that happened the button did nothing at all and said nothing — which is the
+     "分组无法删除" report. The page's own dialog cannot be suppressed, and it also survives the
+     phone's in-app browsers, where confirm() is sometimes swallowed. */
+  .ask-wrap { position: fixed; inset: 0; z-index: 30; display: grid; place-items: center; padding: 24px; }
+  .ask-wrap[hidden] { display: none; }
+  .ask {
+    position: relative; width: 100%; max-width: 300px; background: var(--sheet); border-radius: 14px;
+    padding: 20px 16px 14px; text-align: center; transform: scale(.94); opacity: 0;
+    transition: transform .2s var(--ease-out), opacity .2s var(--ease-out);
+  }
+  .ask-wrap.open .scrim { opacity: 1; }
+  .ask-wrap.open .ask { transform: none; opacity: 1; }
+  .ask h3 { font-size: 16px; font-weight: 600; margin: 0 0 6px; }
+  .ask p { font-size: 13px; color: var(--secondary); margin: 0 0 16px; line-height: 1.45; white-space: pre-line; }
+  .ask .row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+
+  /* PIN. */
+  .pindots { display: flex; gap: 14px; justify-content: center; margin: 20px 0 4px; }
+  .pindots i { width: 13px; height: 13px; border-radius: 50%; background: var(--fill); box-shadow: inset 0 0 0 1px var(--sep); transition: background-color .15s ease, transform .2s var(--ease-out); }
+  .pindots i.on { background: var(--label); transform: scale(1.08); }
+  .shake { animation: shake .34s ease; }
+  @keyframes shake { 0%,100% { transform: none; } 20% { transform: translateX(-8px); } 40% { transform: translateX(7px); } 60% { transform: translateX(-5px); } 80% { transform: translateX(3px); } }
+  .keys { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; max-width: 300px; margin: 20px auto 6px; }
+  .keys button { height: 62px; border: 0; border-radius: 14px; background: var(--card); font-size: 27px; font-weight: 500; cursor: pointer; transition: transform .12s var(--ease-out), background-color .12s ease; }
+  .keys button:active { transform: scale(.94); background: var(--fill); }
+  .keys .fn { background: none; font-size: 15px; font-weight: 600; color: var(--tint); }
+  .keys .fn:active { background: var(--fill); }
+
+  /* Selection bar. */
+  .actionbar {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 15; max-width: 520px; margin: 0 auto;
+    padding: 10px 16px calc(10px + env(safe-area-inset-bottom)); background: var(--bar); box-shadow: 0 -.5px 0 var(--bar-line);
+    -webkit-backdrop-filter: blur(20px); backdrop-filter: blur(20px); display: flex; gap: 12px; align-items: center;
+    transform: translateY(110%); transition: transform .3s var(--ease-drawer);
+  }
+  .actionbar.on { transform: none; }
+  .actionbar .n { flex: 1; font-size: 15px; color: var(--label); line-height: 1.3; }
+  .actionbar .n small { display: block; font-size: 12px; color: var(--secondary); }
+  .actionbar .btn { width: auto; flex: none; padding: 11px 16px; font-size: 15px; border-radius: 11px; }
+  .actionbar .ghost { background: none; color: var(--secondary); padding: 11px 6px; }
+
+  .toast {
+    position: fixed; z-index: 30; left: 50%; bottom: calc(var(--tabbar) + 18px); transform: translate(-50%, 12px);
+    background: rgba(30,30,30,.92); color: #fff; padding: 10px 18px; border-radius: 22px; font-size: 15px; max-width: calc(100% - 32px);
+    opacity: 0; transition: opacity .2s ease, transform .3s var(--ease-out); pointer-events: none;
+    -webkit-backdrop-filter: blur(20px); backdrop-filter: blur(20px);
+  }
+  .toast.on { opacity: 1; transform: translate(-50%, 0); }
+  @media (hover: hover) and (pointer: fine) {
+    button.item:hover, label.item:hover { background: var(--fill); }
+    .btn:hover { filter: brightness(1.06); }
+    nav button:hover { color: var(--label); }
+    .chip:hover { filter: brightness(1.05); }
+  }
+  @media (min-width: 900px) {
+    :root { --side: 220px; }
+    main { max-width: 1040px; margin: 0 0 0 var(--side); padding: 12px 40px 48px; }
+    @media (min-width: 1320px) { main { margin-left: calc(var(--side) + (100vw - var(--side) - 1040px) / 2); } }
+    header { padding-top: 32px; }
+    nav { top: 0; right: auto; bottom: 0; width: var(--side); height: auto; padding: 88px 12px 0; flex-direction: column; justify-content: flex-start; gap: 4px; box-shadow: .5px 0 0 var(--bar-line); }
+    nav button { flex: none; max-width: none; flex-direction: row; gap: 12px; padding: 9px 12px; border-radius: 10px; font-size: 15px; font-weight: 500; color: var(--label); }
+    nav button svg { width: 22px; height: 22px; color: var(--secondary); }
+    nav button[aria-selected="true"] { background: var(--fill); color: var(--tint); }
+    nav button[aria-selected="true"] svg { color: var(--tint); }
+    .sheet { top: 50%; bottom: auto; left: 50%; right: auto; width: 520px; max-height: calc(100% - 80px); border-radius: 14px; padding: 18px 20px 20px; transform: translate(-50%, -46%); opacity: 0; transition: transform .2s var(--ease-out), opacity .15s ease; box-shadow: 0 24px 60px rgba(0,0,0,.3); }
+    .sheet-wrap.open .sheet { transform: translate(-50%, -50%); opacity: 1; transition: transform .26s var(--ease-out), opacity .2s ease; }
+    .grab { display: none; }
+    .toast { bottom: 28px; left: calc(50% + var(--side) / 2); }
+    .actionbar { left: var(--side); right: 0; max-width: 760px; }
+    main.selecting { padding-bottom: 48px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .sheet, .sheet-wrap.open .sheet, .actionbar { transition: none; }
+    .toast { transform: translate(-50%, 0); }
+    .live { animation: none; }
+  }
+</style>
+</head>
+<body>
+<main id="main">
+  <header>
+    <h1 data-i18n="title"></h1>
+    <!-- The client name is the switcher: a <button> with every default reset, so it inherits the
+         line exactly as the old <span> did and the lock button keeps its corner. -->
+    <p><span class="live"></span><button id="devline" data-act="devsheet" style="border:0;background:none;padding:0;font:inherit;color:inherit;text-align:left;cursor:pointer"></button><span class="pill" id="mode"></span></p>
+    <button class="link act" id="lockbtn"></button>
+  </header>
+
+  <section id="s-today">
+    <div class="card" id="globalcard"></div>
+    <div id="livecards"></div>
+    <h2 data-i18n="by_group"></h2>
+    <div class="list" id="grouplist"></div>
+    <p class="foot" data-i18n="by_group_foot"></p>
+    <h2 data-i18n="last7"></h2>
+    <div class="card"><div class="chart" id="chart"></div></div>
+  </section>
+
+  <section id="s-groups" hidden>
+    <h2 data-i18n="groups"></h2>
+    <div class="list" id="groupcards"></div>
+    <p class="foot" data-i18n="groups_foot"></p>
+    <div class="row"><button class="btn plain" data-act="newgrp"></button></div>
+  </section>
+
+  <section id="s-apps" hidden>
+    <div class="search">
+      <svg width="15" height="15" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="8.5" cy="8.5" r="6"/><path d="M13 13l4.5 4.5"/></svg>
+      <input id="q" data-i18n-placeholder="search_app" autocomplete="off" enterkeyhint="search">
+      <button class="link" id="selbtn" data-i18n="select"></button>
+    </div>
+    <div class="list" id="appsrc" style="margin-top:10px"></div>
+    <div class="chips" id="appfilter"></div>
+    <div class="list" id="applist" style="margin-top:12px"></div>
+    <p class="foot" id="appfoot"></p>
+  </section>
+
+  <section id="s-settings" hidden>
+    <h2 data-i18n="set_daily"></h2>
+    <div class="list" id="setdaily"></div>
+    <h2 data-i18n="set_window"></h2>
+    <div class="list" id="setbedtime"></div>
+    <div id="setweek"></div>
+    <h2 data-i18n="set_when_over"></h2>
+    <div class="list" id="setoverflow"></div>
+    <div class="list" id="setbreak" style="margin-top:10px"></div>
+    <h2 data-i18n="set_extend"></h2>
+    <div class="list" id="setextend"></div>
+    <h2 data-i18n="set_parent"></h2>
+    <div class="list" id="setpin"></div>
+    <h2 data-i18n="set_data"></h2>
+    <div class="list" id="setdata"></div>
+    <div class="list" id="setlang" style="margin-top:10px"></div>
+    <h2 data-i18n="set_dev"></h2>
+    <div class="list" id="setdevices"></div>
+    <p class="foot" data-i18n="set_dev_foot"></p>
+    <p class="foot" data-i18n="set_foot"></p>
+  </section>
+
+  <!-- 版本：APK 升级库。读 GET /api/stime/releases，写操作沿用同一套 PIN session。 -->
+  <section id="s-versions" hidden>
+    <div class="row" id="vercards"></div>
+    <div id="vernote" style="margin-top:14px"></div>
+    <h2 data-i18n="ver_bank"></h2>
+    <div class="list" id="verlist"></div>
+    <p class="foot" id="verfoot"></p>
+    <h2 data-i18n="dev_bank"></h2>
+    <div class="list" id="devlist"></div>
+    <p class="foot" data-i18n="dev_foot"></p>
+  </section>
+</main>
+
+<nav role="tablist" id="tabs"></nav>
+<div class="actionbar" id="actionbar" hidden></div>
+<div class="sheet-wrap" id="wrap" hidden><div class="scrim"></div><div class="sheet" id="sheet" role="dialog" aria-modal="true"></div></div>
+<div class="ask-wrap" id="askwrap" hidden><div class="scrim"></div>
+  <div class="ask" role="alertdialog" aria-modal="true" aria-labelledby="askTitle">
+    <h3 id="askTitle"></h3><p id="askBody"></p>
+    <div class="row"><button class="btn plain" id="askNo"></button><button class="btn plain" id="askYes" style="color:var(--danger)"></button></div>
+  </div>
+</div>
+<div class="toast" id="toast" role="status"></div>
+
+<script>
+"use strict";
+
+/* ==================================================================== i18n
+   Dev-time rows [key, zh, en]; production flattens to KEYS + one aligned
+   array per language and adds ru/uk/kk (AGENTS.md). Placeholders are {braced}. */
+const TEXT_TABLE = [
+  ["title", "屏幕时间", "Screen Time"],
+  ["dev_online", "{name} · 在线", "{name} · online"],
+  ["lock_now", "锁定", "Lock"],
+  ["locked_ok", "已锁定 · 改规则要密码", "Locked · PIN needed to edit"],
+  ["unlocked_left", "已解锁 · {t}后自动锁定", "Unlocked · locks again in {t}"],
+  ["tab_today", "今天", "Today"],
+  ["tab_groups", "分组", "Groups"],
+  ["tab_apps", "应用", "Apps"],
+  ["tab_settings", "设置", "Settings"],
+  ["of_limit", "今天上限 {limit}", "Daily cap {limit}"],
+  ["no_limit_set", "今天没设总时长上限", "No daily cap set"],
+  ["left", "还能用 {t}", "{t} left"],
+  ["over_left", "已超时 {t}", "{t} over"],
+  ["quick_add", "临时加时", "Add time"],
+  ["extend_used", "电视上申请过 {n} 次", "{n} requests from the TV"],
+  ["extend_full", "今天加时次数用完了", "No additions left today"],
+  ["added_minutes", "加好了 · {at} 自动收回", "Added · rules return at {at}"],
+  ["exceptions", "生效中的临时时长", "Time you've opened up"],
+  ["exception_left", "剩 {t}", "{t} left"],
+  ["exception_at", "{what} · 到 {at} 止", "{what} · until {at}"],
+  ["exception_global", "全机", "the whole TV"],
+  ["exception_group", "「{name}」组", "“{name}”"],
+  ["revoke", "收回", "Revoke"],
+  ["revoked", "已收回 · 规则立刻生效", "Revoked — the limit is back"],
+  ["bedtime_now", "宵禁中 · {t}后结束", "Bedtime · ends in {t}"],
+  ["bedtime_next", "宵禁 {from}–{to} · {t}后开始", "Bedtime {from}–{to} · starts in {t}"],
+  ["bedtime_off", "宵禁已关闭", "Bedtime is off"],
+  ["now_playing", "此刻正在看", "Right now"],
+  ["now_none", "现在没有在看什么", "Nothing on screen right now"],
+  ["now_in_group", "在「{name}」组里 · 该组已用 {t}", "In “{name}” · {t} for the group"],
+  ["now_ungrouped", "未分组 · 只统计不限制", "Ungrouped · counted, never limited"],
+  ["now_blocked", "这组已被你禁用", "This group is blocked"],
+  ["by_group", "各分组今天", "Groups today"],
+  ["by_group_foot", "组的用量由组内应用实时汇总。改组等于改一批应用，不用一个个调。", "A group's total is summed live from its apps. Change one rule, move a whole shelf."],
+  ["g_unlimited", "不限时长", "No limit"],
+  ["g_used_of", "{used} / {limit}", "{used} of {limit}"],
+  ["g_members", "{n} 个应用", "{n} apps"],
+  ["g_blocked", "已禁用", "Blocked"],
+  ["g_exempt", "宵禁豁免", "Bedtime OK"],
+  ["g_over", "已到点", "Time up"],
+  ["g_soon", "剩 {t}", "{t} left"],
+  ["g_fine", "正常", "OK"],
+  ["ungrouped_row", "未分组", "Ungrouped"],
+  ["ungrouped_sub", "{n} 个应用 · 只统计 · {t}", "{n} apps · counted only · {t}"],
+  ["last7", "最近 7 天", "Last 7 days"],
+  ["groups", "管控分组", "Groups"],
+  ["groups_foot", "时长、宵禁、禁用都设在组上；应用只要选好进哪个组。", "Limits, bedtime and blocking belong to the group. An app only picks one."],
+  ["new_group", "新建分组", "New group"],
+  ["group_name", "分组名称", "Group name"],
+  ["group_color", "颜色", "Colour"],
+  ["group_presets", "从常用分类开始", "Start from a category"],
+  ["create", "创建", "Create"],
+  ["created_group", "已创建「{name}」", "Created “{name}”"],
+  ["created_group_with", "已创建「{name}」，{n} 个应用进来了", "Created “{name}” with {n} apps in it"],
+  ["no_groups_yet", "还没有管控分组。建一个「看视频」，把酷喵、奇异果拉进去 —— 一条规则管一批应用。", "No groups yet. Make one called “Video”, drop the streaming apps in — one rule covers them all."],
+  ["group_daily", "每天可用", "Daily limit"],
+  ["group_add_app", "添加应用", "Add apps"],
+  ["group_members", "组内应用", "Apps in this group"],
+  ["group_no_members", "还没有应用。点「添加应用」把它们选进来。", "Empty so far. Use Add apps to fill it."],
+  ["delete_group", "删除分组", "Delete group"],
+  ["delete_group_q", "删掉「{name}」？组里的应用回到未分组，历史用量不丢。", "Delete “{name}”? Its apps become ungrouped; history stays."],
+  ["deleted_group", "已删除「{name}」", "Deleted “{name}”"],
+  ["block_group", "整组禁用", "Block this group"],
+  ["block_group_sub", "里面全部打不开，随时可关", "Nothing inside opens until you switch it off"],
+  ["exempt_switch", "宵禁期仍可用", "Allowed during bedtime"],
+  ["exempt_sub", "教育、音乐这类别被宵禁误伤", "Handy for learning or music apps"],
+  ["allow_extend", "允许临时加时", "Allow adding time"],
+  ["allow_extend_sub", "关闭后这一组的加时按钮不可用", "Off means the buttons below do nothing for this group"],
+  ["updated_group", "「{name}」已更新", "“{name}” updated"],
+  ["search_app", "搜索应用", "Search apps"],
+  ["select", "选择", "Select"],
+  ["cancel", "取消", "Cancel"],
+  ["delete", "删除", "Delete"],
+  ["clear_btn", "清空", "Clear"],
+  ["done", "完成", "Done"],
+  ["filter_all", "全部", "All"],
+  ["filter_ungrouped", "未分组", "Ungrouped"],
+  ["filter_managed", "已管控", "Managed"],
+  ["filter_used", "今天用过", "Used today"],
+  ["selected_n", "已选 {n} 个应用", "{n} apps selected"],
+  ["selected_move", "其中 {n} 个会离开原来的组", "{n} will leave their current group"],
+  ["join_group", "加入分组", "Add to group"],
+  ["joined_ok", "{n} 个应用已进「{name}」", "{n} apps moved into “{name}”"],
+  ["app_ungrouped", "未分组 · 只统计", "Ungrouped · counted only"],
+  ["app_in_group", "「{name}」", "“{name}”"],
+  ["app_rule_none", "跟随「{name}」· 不限时长", "Follows “{name}” · no limit"],
+  ["app_rule", "跟随「{name}」· {limit}", "Follows “{name}” · {limit}"],
+  ["app_used", "{t}", "{t}"],
+  ["app_never", "今天没用过", "Not used today"],
+  ["app_open_group", "分组设置", "Group settings"],
+  ["app_leave_group", "移出「{name}」", "Remove from “{name}”"],
+  ["left_group", "已移出分组，回到只统计", "Ungrouped — counted, not limited"],
+  ["app_foot", "{total} 个应用，{managed} 个在管控分组里；其余只统计。", "{total} apps, {managed} inside a group; the rest are counted only."],
+  ["set_daily", "全局时长", "Whole-TV limits"],
+  ["set_weekday", "工作日总时长", "Weekdays"],
+  ["set_weekend", "周末总时长", "Weekends"],
+  ["set_window", "可用时间窗", "Allowed hours"],
+  ["bedtime_switch", "宵禁", "Bedtime"],
+  ["bedtime_from", "开始", "From"],
+  ["bedtime_to", "结束", "To"],
+  ["bedtime_days", "宵禁生效于", "Bedtime applies on"],
+  ["set_when_over", "到点之后", "When time is up"],
+  ["ov_home", "回到电视桌面", "Send it back to the home screen"],
+  ["ov_home_sub", "推荐：复用 Aerial 已有的守护拉回，电视上验证过", "Recommended: reuses the guard Aerial already runs"],
+  ["ov_prompt", "只提示，不打断", "Warn, don't stop"],
+  ["ov_screensaver", "直接进屏保", "Go to the screensaver"],
+  ["eye_break", "连续用眼提醒", "Break reminders"],
+  ["eye_every", "连续看满", "After"],
+  ["eye_rest", "休息", "then rest"],
+  ["set_extend", "临时加时", "Adding time"],
+  ["extend_allow", "允许孩子在电视上申请加时", "Let kids ask from the TV"],
+  ["extend_step", "每次加", "Each request"],
+  ["extend_max", "每天最多", "Max per day"],
+  ["set_parent", "家长密码", "Parent PIN"],
+  ["pin_change", "修改家长密码", "Change PIN"],
+  ["pin_setup", "设置家长密码", "Set a PIN"],
+  ["pin_foot", "改规则、收回临时时长时需要。密码只在电视上校验，手机不保存。", "Asked before any rule changes. Verified on the TV, never stored on the phone."],
+  ["set_data", "数据与权限", "Data & permissions"],
+  ["perm_usage", "使用情况访问", "Usage access"],
+  ["perm_on", "已授权", "Granted"],
+  ["perm_off", "需在电视上开启", "Turn it on, on the TV"],
+  ["calc_note", "统计口径", "How it's counted"],
+  ["calc_val", "按前台时间", "Foreground time"],
+  ["reset_data", "清空用量记录", "Reset usage history"],
+  ["reset_q", "清空后今天的图归零，规则保留。", "Today's charts go back to zero; your rules stay."],
+  ["reset_done", "已清空", "Cleared"],
+  ["language", "语言", "Language"],
+  ["set_foot", "原型：数据是假的，交互是真的。接上电视后每次改动都会同步，各端 6 秒内一致。", "Prototype: the data is fake, the interactions are not. On a real TV every change syncs within 6s."],
+  ["pin_title", "输入家长密码", "Enter your PIN"],
+  ["pin_hint", "改这里的设置需要它", "Needed to change these settings"],
+  ["pin_old", "先输一次旧密码", "Enter your current PIN"],
+  ["pin_new", "设置 4 位新密码", "Choose a new 4-digit PIN"],
+  ["pin_again", "再输一次确认", "Enter it again"],
+  ["pin_wrong", "密码不对", "Wrong PIN"],
+  ["pin_mismatch", "两次不一样，重来", "They didn't match"],
+  ["pin_saved", "密码已更新", "PIN updated"],
+  ["pin_needed", "先输密码，再改规则", "Unlock with your PIN first"],
+  ["limit_foot", "改的是这一条规则本身，不带今天已经用掉的时间。", "This sets the rule. Time already used today stays counted."],
+  ["ok", "好", "OK"],
+  ["used_suffix", "已用", "used"],
+  ["mode_live", "已连 tv-manager 后端 · 数据来自电视", "on tv-manager · live from the TV"],
+  ["mode_demo", "演示数据（没连后端）", "demo data (no backend)"],
+  ["api_fail", "后端没响应，这次改动没保存", "The backend did not answer — nothing was saved"],
+  ["unit_hours", "小时", "hours"],
+  ["unit_minutes", "分钟", "minutes"],
+  ["unlimited_switch", "不限时长", "No daily limit"],
+  ["save", "保存", "Save"],
+  ["dur_zero", "一整天都打不开", "Blocked all day"],
+  ["limit_unlimited", "不限", "No limit"],
+  ["mins", "{n} 分钟", "{n} min"],
+  ["hours", "{n} 小时", "{n} h"],
+  ["hm", "{h} 小时 {m} 分", "{h}h {m}m"],
+  ["min_s", "{n} 分", "{n} min"],
+  ["sec_s", "{n} 秒", "{n}s"],
+  ["d_sun", "日", "S"], ["d_mon", "一", "M"], ["d_tue", "二", "T"], ["d_wed", "三", "W"],
+  ["d_thu", "四", "T"], ["d_fri", "五", "F"], ["d_sat", "六", "S"],
+  ["cat_video", "看视频", "Video"],
+  ["cat_kid", "儿童内容", "Kids"],
+  ["cat_edu", "学习", "Learning"],
+  ["cat_game", "游戏", "Games"],
+  ["cat_tool", "工具", "Tools"],
+  ["cat_news", "体育与资讯", "Sports & news"],
+  ["cat_music", "音乐 K 歌", "Music & karaoke"],
+  ["tab_versions", "版本", "Versions"],
+  ["flavor_standard", "标准版", "Standard"],
+  ["flavor_guard", "守护版", "Guard"],
+  ["ver_current", "当前生效", "In force"],
+  ["ver_none", "未发布", "Nothing published"],
+  ["ver_none_sub", "这个渠道还没有启用的包", "No build in force on this channel"],
+  ["ver_bank", "版本库", "Version library"],
+  ["ver_enabled", "启用中", "In force"],
+  ["ver_off", "未启用", "Disabled"],
+  ["ver_all", "全体", "Everyone"],
+  ["ver_canary_n", "灰度 {n} 台", "{n} TVs"],
+  ["ver_notes", "更新说明", "Release notes"],
+  ["ver_notes_none", "没写说明", "No notes"],
+  ["ver_enable", "启用", "Enable"],
+  ["ver_disable", "停用", "Disable"],
+  ["ver_target", "灰度…", "Canary…"],
+  ["ver_del", "删除", "Delete"],
+  ["ver_refresh", "刷新", "Refresh"],
+  ["ver_count", "{n} 个版本 · 启用的那版会被电视在下一次心跳拿到", "{n} builds · the one in force reaches TVs on their next beat"],
+  ["ver_empty", "版本库是空的。用 publish-apk.sh 发一版，回到这里点「启用」才会推给电视。", "Nothing in the bank. Publish with publish-apk.sh, then press Enable here to offer it."],
+  ["ver_noload", "还没取到版本库。", "The version library has not loaded yet."],
+  ["ver_retry", "重新加载", "Reload"],
+  ["ver_fail", "后端没响应，下面还是上一次取到的内容", "The backend did not answer — the list below is the last one loaded"],
+  ["ver_need_pin", "版本库要家长密码才看得到", "The version library needs the parent PIN"],
+  ["ver_noload_short", "还没取到", "Not loaded yet"],
+  ["ver_unlock", "输入密码", "Enter PIN"],
+  ["ver_uploaded", "上传于", "Uploaded"],
+  ["ver_enabled_ok", "已启用 {v} · 还没升的电视下一次心跳就会拿到", "{v} is in force · TVs that have not moved pick it up on their next beat"],
+  ["ver_disabled_ok", "已停用 {v} · 只影响还没升的电视", "{v} is off · only TVs that have not moved are affected"],
+  ["ver_target_ok", "灰度名单已更新 · {n} 台", "Canary list saved · {n} TVs"],
+  ["ver_target_ok_all", "已放开全体 · 该渠道的电视都会拿到", "Sent to everyone · every TV on this channel gets it"],
+  ["ver_target_foot", "只有勾中的电视会拿到这一版；一个都不勾＝发给全体。", "Only the TVs you tick get this build; ticking none means everyone."],
+  ["ver_all_now", "放开全体", "Everyone"],
+  ["ver_enable_q", "启用 {v}？\n\n启用＝开始推给名单里的电视（当前：{who}）。名单里的电视大约 30 秒内就会看到新版本，但仍要人在电视上点一次「安装」确认，不会自己装上。", "Enable {v}?\n\nEnabling starts offering it to the TVs on the list (now: {who}). They see it within about 30s, but a person still has to press Install on the TV — nothing installs by itself."],
+  ["ver_del_q", "删掉后台里的 {v}？\n\n只删后台里的这一份包，已装上 {v} 的电视不会被降级，也不会被动过。\n如果名单里的电视只有这一个可用版本，删掉之后它们就不再收到升级提示。", "Delete {v} from the backend?\n\nOnly the entry stored here goes away. TVs already on {v} are not downgraded and not touched.\nIf the listed TVs have no other build in force, they stop getting an update offer."],
+  ["ver_deleted_ok", "已删除 {v}", "Deleted {v}"],
+  ["delete_release", "删除版本", "Delete release"],
+  ["dev_bank", "设备与版本", "TVs & versions"],
+  ["dev_foot", "版本由各电视在心跳里上报；老版本没上报过的显示「未知」。", "Each TV reports its own version on its heartbeat; a TV that never reported shows 未知."],
+  ["dev_unknown", "版本未知", "version unknown"],
+  ["dev_can", "可升级", "update ready"],
+  ["dev_empty", "还没有电视接入后台。", "No TV has enrolled with the backend yet."],
+  ["dev_noload", "还没取到设备列表。", "The device list has not loaded yet."],
+  ["page_err", "页面出错了，请重新打开", "The page hit an error — please reopen it"],
+  ["apps_source", "应用清单", "App list"],
+  ["apps_updated", "清单更新于 {ago}", "list updated {ago}"],
+  ["apps_never", "这台电视还没上报过清单", "this TV has not reported its list yet"],
+  ["apps_refresh", "刷新", "Refresh"],
+  ["apps_refreshing", "等电视下一次心跳…", "waiting for the TV's next heartbeat…"],
+  ["apps_refresh_sent", "已通知电视刷新，最多 30 秒", "Asked the TV to refresh — up to 30s"],
+  ["ago_now", "刚刚", "just now"],
+  ["ago_min", "{n} 分钟前", "{n} min ago"],
+  ["ago_hour", "{n} 小时前", "{n} h ago"],
+  ["ago_day", "{n} 天前", "{n} d ago"],
+  /* Clients: one TV per rule set (CLIENTS.md §4). */
+  ["dev_pick", "切换电视", "Switch TV"],
+  ["dev_pick_sub", "点一台，下面所有设置都只改它", "Tap one — everything below edits only that TV"],
+  ["dev_pick_foot", "每台电视有自己的分组、限额、宵禁和放行。", "Each TV keeps its own groups, limits, bedtime and passes."],
+  ["dev_today", "今天 {t}", "{t} today"],
+  ["dev_st_online", "在线", "online"],
+  ["dev_st_offline", "离线", "offline"],
+  ["dev_current", "当前", "Current"],
+  ["dev_rename", "重命名", "Rename"],
+  ["dev_name", "电视名称", "TV name"],
+  ["dev_renamed", "已改名为「{name}」", "Renamed to “{name}”"],
+  ["dev_remove", "移除", "Remove"],
+  ["dev_remove_q", "从后台移除「{name}」？\n\n它的规则、今天的用量和放行一起删掉，那台电视上的 Aerial 会退回未接入。", "Remove “{name}”?\n\nIts rules, today's usage and any open pass go with it, and Aerial on that TV drops back to not enrolled."],
+  ["dev_removed", "已移除「{name}」", "Removed “{name}”"],
+  ["set_dev", "客户端", "TVs"],
+  ["set_dev_foot", "新电视在电视上输接入令牌就能加进来；每台各有一套规则。", "A new TV joins by entering the enrolment token there. Each one keeps its own rules."],
+  ["enrol", "接入新电视", "Enrolling new TVs"],
+  ["enrol_on", "已开启", "Open"],
+  ["enrol_off", "已关闭", "Closed"],
+  ["enrol_sub_on", "输接入令牌就能加入", "Enter the token on the TV to join"],
+  ["enrol_sub_off", "接入已关闭，新电视进不来", "Closed — no new TV can join"],
+  /* Today: a pass opened on the TV, and the one-press reset. */
+  ["ex_daypass", "放心全天", "All-day pass"],
+  ["ex_daypass_sub", "电视上输密码放的 · 到 {at} 止", "Opened on the TV with the PIN · until {at}"],
+  ["reset_today", "重置今天", "Reset today"],
+  ["reset_today_q", "清空今天的用量，并收回所有放行。\n\n这台电视立刻按正常限额走，家长加的和电视上放的都一起收回。", "Clear today's usage and revoke every pass?\n\nThe TV goes back to its normal limits; anything added here or opened on the TV is taken back."],
+  ["reset_today_yes", "重置", "Reset"],
+  ["reset_today_ok", "已重置", "Reset"],
+];
+const KEYS = TEXT_TABLE.map(r => r[0]);
+const TEXTS = { zh: TEXT_TABLE.map(r => r[1]), en: TEXT_TABLE.map(r => r[2]) };
+console.assert(TEXTS.zh.length === KEYS.length && TEXTS.en.length === KEYS.length, "KEYS/TEXTS index drift");
+const LANGS = ["zh", "en"];
+const I18N = {};
+for (const l of LANGS) { I18N[l] = {}; KEYS.forEach((k, i) => { I18N[l][k] = TEXTS[l][i]; }); }
+let LANG = new URLSearchParams(location.search).get("lang") || localStorage.getItem("aerial-lang")
+  || (LANGS.includes(((navigator.languages || ["en"])[0] || "en").slice(0, 2)) ? ((navigator.languages || ["en"])[0]).slice(0, 2) : "en");
+function t(key, vars) {
+  let s = I18N[LANG][key] || I18N.en[key] || TEXTS.zh[KEYS.indexOf(key)] || key;
+  if (vars) for (const k in vars) s = s.split("{" + k + "}").join(vars[k]);
+  return s;
+}
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const clockOf = ts => new Date(ts).toLocaleTimeString(LANG === "zh" ? "zh-CN" : "en-GB", { hour: "2-digit", minute: "2-digit" });
+
+/* ==================================================================== mock state
+   Stands in for GET /api/stime + GET /api/usage (DESIGN.md §5). */
+const MIN = 60000, HOUR = 3600000;
+const COLORS = ["#0a84ff", "#34c759", "#ff9f0a", "#ff3b30", "#af52de", "#5ac8fa", "#ff2d55", "#8e8e93"];
+let APPS = [
+  { pkg: "com.cibn.tv", label: { zh: "CIBN酷喵", en: "CIBN Youku" }, cat: "video" },
+  { pkg: "com.gitv.tv", label: { zh: "银河奇异果", en: "iQIYI TV" }, cat: "video" },
+  { pkg: "com.ktcp.video", label: { zh: "云视听极光", en: "Tencent TV" }, cat: "video" },
+  { pkg: "com.bilibili.bst", label: { zh: "云视听小电视", en: "Bilibili TV" }, cat: "video" },
+  { pkg: "com.starv.mgtv", label: { zh: "芒果TV", en: "Mango TV" }, cat: "video" },
+  { pkg: "com.m1905.sohu", label: { zh: "搜狐视频TV", en: "Sohu TV" }, cat: "video" },
+  { pkg: "com.bbks.animal", label: { zh: "宝宝巴士", en: "BabyBus" }, cat: "kid" },
+  { pkg: "com.wukong.shizi", label: { zh: "悟空识字", en: "Wukong Words" }, cat: "kid" },
+  { pkg: "com.xxyq.tv", label: { zh: "小小优趣", en: "XiaoXiao YouQu" }, cat: "kid" },
+  { pkg: "com.hongen.word", label: { zh: "洪恩识字", en: "Hong'en Words" }, cat: "edu" },
+  { pkg: "com.kashu.story", label: { zh: "凯叔讲故事", en: "Kashu Stories" }, cat: "edu" },
+  { pkg: "com.ximalaya.kids", label: { zh: "喜马拉雅儿童", en: "Ximalaya Kids" }, cat: "edu" },
+  { pkg: "com.talkingtom.tv", label: { zh: "会说话的汤姆猫", en: "Talking Tom" }, cat: "game" },
+  { pkg: "com.subway.surfers", label: { zh: "地铁跑酷", en: "Subway Surfers" }, cat: "game" },
+  { pkg: "com.dangbeimarket", label: { zh: "当贝市场", en: "Dangbei Market" }, cat: "tool" },
+  { pkg: "com.es.filemanager", label: { zh: "ES文件浏览器", en: "ES Explorer" }, cat: "tool" },
+  { pkg: "com.tencent.wftv", label: { zh: "微信电视", en: "WeTV Remote" }, cat: "tool" },
+  { pkg: "com.migu.video", label: { zh: "咪咕视频", en: "Migu Video" }, cat: "news" },
+  { pkg: "com.cctv.tv", label: { zh: "央视频TV", en: "CCTV TV" }, cat: "news" },
+  { pkg: "com.huya.tv", label: { zh: "虎牙直播", en: "Huya Live" }, cat: "news" },
+  { pkg: "com.ksge.daren", label: { zh: "K歌达人", en: "Karaoke Star" }, cat: "music" },
+  { pkg: "com.dangbei.music", label: { zh: "当贝音乐", en: "Dangbei Music" }, cat: "music" },
+];
+const appOf = pkg => APPS.find(a => a.pkg === pkg) || { pkg, label: { zh: pkg, en: pkg }, cat: "tool" };
+const nameOf = pkg => appOf(pkg).label[LANG];
+const glyph = s => { const c = s.trim()[0] || "?"; return /[A-Za-z]/.test(c) ? c.toUpperCase() : c; };
+const gname = g => g.name[LANG];
+const M = {
+  device: { id: "demo", name: "小米电视 EA55", kind: "demo" },
+  ready: { usageStats: true, enrolment: true },
+  // Two fake clients keep the offline demo honest: switch between them from the header, and
+  // everything that reads M.device follows (CLIENTS.md §4).
+  devices: [
+    { id: "demo", name: "小米电视 EA55", kind: "demo", todayMs: 143 * MIN, online: true },
+    { id: "tv-bed", name: "卧室电视", kind: "tv", todayMs: 42 * MIN, online: false },
+  ],
+  defaultDeviceId: "demo",
+  global: {
+    dailyMinutes: { weekday: 180, weekend: 240 },
+    bedtime: { enabled: true, from: "21:30", to: "06:30", weekdays: [1, 2, 3, 4, 5, 6, 7] },
+    overflow: "home",
+    eyeBreak: { enabled: true, every: 30, rest: 10 },
+    extendPolicy: { allowRequest: true, step: 15, max: 3 },
+  },
+  groups: [
+    { id: "g_video", name: { zh: "看视频", en: "Video" }, color: "#0a84ff", dailyMinutes: 60, bedtimeExempt: false, blocked: false, extendAllowed: true,
+      members: ["com.cibn.tv", "com.gitv.tv", "com.ktcp.video", "com.bilibili.bst"] },
+    { id: "g_kid", name: { zh: "儿童内容", en: "Kids" }, color: "#34c759", dailyMinutes: 40, bedtimeExempt: false, blocked: false, extendAllowed: true,
+      members: ["com.bbks.animal", "com.wukong.shizi", "com.xxyq.tv"] },
+    { id: "g_edu", name: { zh: "学习", en: "Learning" }, color: "#ff9f0a", dailyMinutes: null, bedtimeExempt: true, blocked: false, extendAllowed: false,
+      members: ["com.hongen.word", "com.kashu.story", "com.ximalaya.kids"] },
+    { id: "g_game", name: { zh: "游戏", en: "Games" }, color: "#ff3b30", dailyMinutes: 20, bedtimeExempt: false, blocked: false, extendAllowed: false,
+      members: ["com.talkingtom.tv", "com.subway.surfers"] },
+    { id: "g_music", name: { zh: "音乐 K 歌", en: "Music" }, color: "#af52de", dailyMinutes: null, bedtimeExempt: true, blocked: true, extendAllowed: false,
+      members: ["com.ksge.daren", "com.dangbei.music"] },
+  ],
+  byApp: {
+    "com.cibn.tv": 22 * MIN, "com.gitv.tv": 14 * MIN, "com.ktcp.video": 8 * MIN, "com.bilibili.bst": 6 * MIN,
+    "com.bbks.animal": 12 * MIN, "com.wukong.shizi": 7 * MIN, "com.xxyq.tv": 3 * MIN,
+    "com.hongen.word": 15 * MIN, "com.kashu.story": 6 * MIN, "com.ximalaya.kids": 4 * MIN,
+    "com.talkingtom.tv": 18 * MIN, "com.subway.surfers": 5 * MIN,
+    "com.dangbeimarket": 4 * MIN, "com.es.filemanager": 2 * MIN, "com.migu.video": 12 * MIN, "com.cctv.tv": 5 * MIN,
+  },
+  week: [64, 128, 96, 152, 88, 205],
+  current: { pkg: "com.cibn.tv", since: Date.now() - 12 * MIN },
+  exceptions: [],
+  extendUsed: 0,
+  pin: { set: true, code: "1234", locked: true, until: 0 },
+};
+
+let LIVE = false, GRANT = sessionStorage.getItem("stime-grant") || "", SKEW = 0;
+const apiUrl = path => "api/" + path;                     // relative: works under a subpath too
+const now = () => Date.now() + SKEW;                     // the server owns the clock
+
+/* Which client the page looks at. Remembered per phone so the next open lands on the same set, and
+   an id that no longer exists falls back to the client the server answers with (CLIENTS.md §4). */
+const DEV_KEY = "aerial-stime-device";
+function lsDevice() { try { return localStorage.getItem(DEV_KEY) || ""; } catch (e) { return ""; } }
+function saveDevice(id) { try { localStorage.setItem(DEV_KEY, id); } catch (e) {} }
+let DEV = lsDevice();
+const devOf = id => M.devices.find(d => d.id === id) || null;
+const curId = () => DEV || M.defaultDeviceId || (M.devices[0] && M.devices[0].id) || (M.device && M.device.id) || "";
+// The live server sends todayMs for every client; offline the open set is the mock's own usage.
+const devTodayMs = d => (d.id === curId() && !LIVE) ? usedMs() : (d.todayMs || 0);
+
+/* The server is the source of truth when it answers; the mock below stays as the offline demo. */
+function hydrate(st) {
+  LIVE = true;
+  SKEW = st.serverTime - Date.now();
+  APPS = st.apps.map(a => ({ pkg: a.pkg, label: a.label, cat: a.cat }));
+  M.devices = Array.isArray(st.devices) ? st.devices : [];
+  M.defaultDeviceId = st.defaultDeviceId || (st.device && st.device.id) || "";
+  // Stay on a client that exists. A stored id whose TV was removed on another phone falls back to
+  // the household default, and the first open — nothing stored yet — starts there too, not on
+  // whatever the server happened to answer with.
+  const known = id => !!id && M.devices.some(d => d.id === id);
+  DEV = known(DEV) ? DEV : (known(M.defaultDeviceId) ? M.defaultDeviceId : ((st.device && st.device.id) || ""));
+  if (DEV) saveDevice(DEV);
+  M.device = st.device; M.ready = st.ready; M.global = st.global; M.groups = st.groups;
+  M.exceptions = st.exceptions.map(e => ({ id: e.id, scope: e.scope, gid: e.gid, minutes: e.minutes,
+    by: e.by, kind: e.kind, expiresAt: e.expiresAt }));
+  M.byApp = Object.assign({}, st.usage.byApp);
+  M.week = st.week.slice(0, 6).map(d => Math.round(d.totalMs / MIN));
+  const cur = st.usage.current;
+  M.current = cur ? { pkg: cur.pkg, since: now() - (cur.liveMs || 0) } : { pkg: null, since: now() };
+  M.extendUsed = st.extendUsed;
+  M.pin.locked = st.locked; M.pin.set = st.hasPin;
+  if (st.expiresIn) M.pin.until = now() + st.expiresIn * 1000;
+  if (st.grant) { GRANT = st.grant; sessionStorage.setItem("stime-grant", GRANT); }
+}
+function fetchState() {
+  const q = new URLSearchParams();
+  if (GRANT) q.set("grant", GRANT);
+  const did = curId(); if (did) q.set("device", did);
+  const s = q.toString();
+  return fetch(apiUrl("stime") + (s ? "?" + s : ""), { headers: { Accept: "application/json" } })
+    .then(r => r.ok ? r.json() : Promise.reject(new Error("http " + r.status)));
+}
+
+/* Mock-only conveniences for opening this file straight from disk. */
+const QS = new URLSearchParams(location.search);
+function seedDemoFromUrl() {
+  // Offline nothing answers to correct a stale id, so fall back to a client the mock actually has.
+  if (!devOf(DEV)) DEV = M.defaultDeviceId || (M.devices[0] && M.devices[0].id) || DEV;
+  syncMockDevice();
+  if (+QS.get("ex")) M.exceptions.push({ id: "demo", scope: "global", minutes: +QS.get("ex"), expiresAt: Date.now() + (+QS.get("ex")) * MIN, by: "parent", kind: "timed" });
+  // ?daypass=1 leaves the same all-day pass the TV opens with its PIN, so revoke can be tried offline.
+  if (+QS.get("daypass")) M.exceptions.push({ id: "demoday", scope: "global", minutes: 600, expiresAt: Date.now() + 6 * HOUR, by: "tv-pin", kind: "rest-of-day" });
+  if (QS.get("lock") === "0") { M.pin.locked = false; M.pin.until = Date.now() + 600000; }
+}
+/* The offline twin of a client switch: the header and every card read M.device. */
+function syncMockDevice() {
+  const d = devOf(DEV);
+  if (d) M.device = Object.assign({}, M.device, { id: d.id, name: d.name, kind: d.kind });
+}
+
+/* ==================================================================== derived */
+const isWeekend = () => [0, 6].includes(new Date().getDay());
+const capMin = () => M.global.dailyMinutes[isWeekend() ? "weekend" : "weekday"];
+const usedMs = () => Object.values(M.byApp).reduce((a, b) => a + b, 0);
+const gUsed = g => g.members.reduce((a, p) => a + (M.byApp[p] || 0), 0);
+const gidOf = pkg => { const g = M.groups.find(x => x.members.includes(pkg)); return g ? g.id : null; };
+const grp = id => M.groups.find(g => g.id === id);
+const fmtDur = ms => {
+  const m = Math.floor(Math.max(0, ms) / MIN);
+  if (m < 1) return t("sec_s", { n: Math.max(0, Math.round(ms / 1000)) });
+  if (m < 60) return t("min_s", { n: m });
+  const h = Math.floor(m / 60);
+  return m % 60 ? t("hm", { h, m: m % 60 }) : t("hours", { n: h });
+};
+const fmtLimit = m => m == null ? t("g_unlimited") : fmtDur(m * MIN);
+const fmtLeft = ms => fmtDur(ms);
+function bedtimeNow() {
+  const b = M.global.bedtime, now = new Date();
+  if (!b.enabled) return { on: false, text: t("bedtime_off") };
+  const [fh, fm] = b.from.split(":").map(Number), [th, tm] = b.to.split(":").map(Number);
+  const mins = now.getHours() * 60 + now.getMinutes(), from = fh * 60 + fm, to = th * 60 + tm;
+  const day = now.getDay() === 0 ? 7 : now.getDay(), prev = day === 1 ? 7 : day - 1;
+  const span = from > to ? (mins >= from || mins < to) : (mins >= from && mins < to);
+  const owned = from > to ? (mins >= from ? b.weekdays.includes(day) : b.weekdays.includes(prev)) : b.weekdays.includes(day);
+  if (span && owned) {
+    const end = new Date(to > mins ? now : new Date(now.getTime() + 864e5)); end.setHours(th, tm, 0, 0);
+    return { on: true, text: t("bedtime_now", { t: fmtLeft(end.getTime() - Date.now()) }) };
+  }
+  let next = new Date(now); next.setHours(fh, fm, 0, 0);
+  for (let i = 0; i < 8; i++) {
+    const d = next.getDay() === 0 ? 7 : next.getDay();
+    if (next > now && b.weekdays.includes(d)) break;
+    next = new Date(next.getTime() + 864e5);
+  }
+  return { on: false, text: t("bedtime_next", { from: b.from, to: b.to, t: fmtLeft(next - now) }) };
+}
+const liveEx = () => M.exceptions.filter(e => e.expiresAt > now());
+const exFor = (gid, at = now()) => liveEx().find(e => (e.scope === "global" || e.gid === gid) && e.expiresAt > at);
+const grantLeft = () => M.pin.locked ? 0 : Math.max(0, M.pin.until - now());
+// No PIN set yet means an open house: writes go through, and Settings nags you to set one.
+const unlocked = () => !M.pin.set || (!M.pin.locked && grantLeft() > 0);
+function verifyPin(entry, ok, bad) {
+  if (!LIVE) { entry === M.pin.code ? ok() : bad(); return; }
+  fetch(apiUrl("stime/unlock"), { method: "POST", body: new URLSearchParams({ pin: entry }) })
+    .then(async r => { const st = await r.json().catch(() => ({})); if (r.ok) { hydrate(st); ok(); } else bad(); },
+                  () => { toast(t("api_fail")); bad(); });
+}
+const pctOf = (a, b) => Math.max(0, Math.min(1, b ? a / b : 0));
+function barStyle(used, limitMin, color) {
+  const p = limitMin == null ? pctOf(used, 3 * HOUR) : pctOf(used, limitMin * MIN);
+  const c = limitMin != null && p >= 1 ? "var(--danger)" : limitMin != null && p >= .85 ? "var(--warn)" : color || "var(--tint)";
+  return `<div class="bar"><i style="width:${(p * 100).toFixed(1)}%;background:${c}"></i></div>`;
+}
+function icon(pkg, color, size) {
+  const c = color || (() => { const g = grp(gidOf(pkg)); return g ? g.color : "#8e8e93"; })();
+  return `<span class="icon-sq" style="background:linear-gradient(155deg,${c},${c}cc);${size ? `width:${size}px;height:${size}px` : ""}">${esc(glyph(nameOf(pkg)))}</span>`;
+}
+
+/* ==================================================================== api(): swap for fetch() */
+function mockApi(path, body) {
+  const g = body || {};
+  const patchObj = o => { Object.assign(o, JSON.parse(g.patch || "{}")); };
+  switch (path) {
+    case "stime/apps/refresh": M.device.appsWantedAt = Date.now(); break;
+    case "stime/extend": {
+      // A parent's addition never counts against the TV's own daily request cap (CLIENTS.md §3).
+      const row = { id: "e" + Date.now(), scope: g.scope === "group" ? "group" : "global", minutes: +g.minutes,
+        by: "parent", kind: "timed", expiresAt: Date.now() + g.minutes * MIN };
+      if (g.scope === "group") row.gid = g.id;
+      M.exceptions.push(row); break;
+    }
+    case "stime/extend/cancel": M.exceptions = M.exceptions.filter(e => e.id !== g.id); break;
+    case "stime/daily": M.global.dailyMinutes[g.scope] = g.minutes === "null" ? null : +g.minutes; break;
+    case "stime/bedtime": if (g.on !== undefined) M.global.bedtime.enabled = g.on === "1"; if (g.from) M.global.bedtime.from = g.from; if (g.to) M.global.bedtime.to = g.to; break;
+    case "stime/bedtime/days": M.global.bedtime.weekdays = g.weekdays.split(",").map(Number); break;
+    case "stime/overflow": M.global.overflow = g.action; break;
+    case "stime/break": patchObj(M.global.eyeBreak); break;
+    case "stime/extendpolicy": patchObj(M.global.extendPolicy); break;
+    case "stime/group/add": {
+      const id = "g" + Date.now();
+      M.groups.push({ id, name: { zh: g.name, en: g.name }, color: g.color, dailyMinutes: 60, bedtimeExempt: false, blocked: false, extendAllowed: true, members: [] });
+      return { id, added: id };
+    }
+    case "stime/group/update": patchObj(grp(g.id) || {}); break;
+    case "stime/group/del": M.groups = M.groups.filter(x => x.id !== g.id); break;
+    case "stime/group/members": {
+      const pkgs = (g.pkgs || "").split(",").filter(Boolean), target = grp(g.id);
+      pkgs.forEach(p => M.groups.forEach(x => { if (x !== target) x.members = x.members.filter(y => y !== p); }));
+      target.members = [...new Set([...target.members, ...pkgs])]; break;
+    }
+    case "stime/app/leave": { const o = grp(g.from); if (o) o.members = o.members.filter(x => x !== g.pkg); break; }
+    case "stime/reset": Object.keys(M.byApp).forEach(k => { M.byApp[k] = 0; }); M.week = [0, 0, 0, 0, 0, 0]; break;
+    case "stime/recover":
+      // One press, one state: usage back to zero and every pass taken back (CLIENTS.md §3).
+      Object.keys(M.byApp).forEach(k => { M.byApp[k] = 0; }); M.week = [0, 0, 0, 0, 0, 0];
+      M.exceptions = []; break;
+    case "stime/device/rename": {
+      const d = devOf(g.id);
+      if (!d) return { error: "no such device" };
+      const name = String(g.name || "").trim().slice(0, 40);
+      if (!name) return { error: "name required" };
+      d.name = name;
+      if (d.id === curId()) syncMockDevice();
+      return { renamed: d.id, name };
+    }
+    case "stime/device/del": {
+      const d = devOf(g.id);
+      if (!d) return { error: "no such device" };
+      if (d.kind === "demo") return { error: "只能移除真实接入的电视，demo 是页面的占位" };
+      M.devices = M.devices.filter(x => x.id !== d.id);
+      if (DEV === d.id) { DEV = M.defaultDeviceId || (M.devices[0] && M.devices[0].id) || ""; saveDevice(DEV); syncMockDevice(); }
+      return { removed: d.id };
+    }
+    case "stime/lock": M.pin.locked = true; break;
+    case "stime/pin": M.pin.code = g.code; M.pin.set = true; break;
+  }
+  M.exceptions = liveEx();
+  return {};
+}
+
+/* api(): one call shape for both modes. Offline it mutates the mock and returns an object;
+   online it returns a Promise resolving to the whole state the server sent back. */
+function api(path, body) {
+  if (!LIVE) return mockApi(path, body);
+  const fd = new URLSearchParams(body || {});
+  if (GRANT) fd.set("grant", GRANT);
+  const did = curId(); if (did) fd.set("device", did);     // every write names its client
+  return fetch(apiUrl(path), { method: "POST", body: fd }).then(async r => {
+    const st = await r.json().catch(() => ({}));
+    if (!r.ok) { toast(st.needPin ? t("pin_needed") : (st.error || t("api_fail"))); refresh(); throw new Error(st.error || "http " + r.status); }
+    // A write answers with the state of policy.active unless the backend echoes the client it was
+    // pointed at. Repainting that would silently swap the rules under the parent, so ask again for
+    // ours whenever the two disagree; a removed client lands on the server's default.
+    if (did && st.device && st.device.id !== did) {
+      const mine = await fetchState().catch(() => null);
+      if (mine) { hydrate(mine); return mine; }
+    }
+    hydrate(st);
+    return st;
+  }, () => { toast(t("api_fail")); throw new Error("offline"); });
+}
+function refresh() {
+  if (!LIVE || document.hidden || !wrap.hidden) return;
+  fetchState().then(st => { hydrate(st); render(); }).catch(() => {});
+}
+function isAsync(r) { return !!r && typeof r.then === "function"; }
+function send(path, body, msg) {
+  if (!unlocked() && path !== "stime/lock") { openPin("unlock", () => send(path, body, msg)); return false; }
+  const done = () => { render(); if (msg) toast(typeof msg === "function" ? msg() : msg); return true; };
+  const r = api(path, body);
+  return isAsync(r) ? r.then(done, () => false) : done();
+}
+let toastH;
+function toast(msg) {
+  const el = document.getElementById("toast");
+  el.textContent = msg; el.classList.add("on");
+  clearTimeout(toastH); toastH = setTimeout(() => el.classList.remove("on"), 2400);
+}
+/* An exception in the middle of a render used to leave the page blank with nothing said, which on
+   a phone reads as the page crashing. Say it in the toast instead of going quiet. */
+function pageError() {
+  const el = document.getElementById("toast");
+  el.textContent = t("page_err");
+  el.classList.add("on");
+  clearTimeout(toastH);
+  toastH = setTimeout(() => el.classList.remove("on"), 4000);
+}
+addEventListener("error", pageError);
+addEventListener("unhandledrejection", pageError);
+
+/* ==================================================================== sheet */
+const wrap = document.getElementById("wrap"), sheet = document.getElementById("sheet");
+const CTX = { gid: null, pkg: null, pkgs: null, afterJoin: null, pickFn: null, afterNew: null, dur: null, durSync: null, durStop: null, relPick: null };
+let sheetSeq = 0;
+function openSheet(html) {
+  sheetSeq++;
+  if (CTX.durStop) CTX.durStop();
+  CTX.afterJoin = CTX.pickFn = CTX.dur = CTX.durSync = CTX.durStop = CTX.relPick = null;
+  sheet.innerHTML = '<div class="grab"></div>' + html;
+  sheet.scrollTop = 0;
+  wrap.hidden = false;
+  const seq = sheetSeq;
+  // A closeSheet() already queued in this frame has removed .open; without this guard its own rAF
+  // would mark a hidden wrapper open and the sheet would never appear again.
+  requestAnimationFrame(() => { if (seq === sheetSeq && !wrap.hidden) wrap.classList.add("open"); });
+}
+function closeSheet() {
+  if (CTX.durStop) CTX.durStop();
+  // The token, not the open class: a sheet reopened within the animation window must not be wiped.
+  const seq = sheetSeq;
+  wrap.classList.remove("open");
+  setTimeout(() => {
+    if (seq !== sheetSeq) return;
+    wrap.hidden = true;
+    wrap.classList.remove("open");
+    sheet.innerHTML = "";
+  }, 240);
+}
+wrap.addEventListener("click", e => { if (e.target.classList.contains("scrim")) closeSheet(); });
+addEventListener("keydown", e => { if (e.key === "Escape" && !wrap.hidden) closeSheet(); });
+
+/* ==================================================================== ask */
+/* One question, one answer: the page's own replacement for window.confirm(). Every destructive
+   action goes through it (delete a group, clear usage, enable or drop a release). A native dialog
+   that the browser has decided to suppress looks exactly like a dead button, and that is how
+   "分组无法删除" came about: no request ever left the browser. */
+let ASK = null;
+const askwrap = document.getElementById("askwrap");
+function ask(title, body, onYes, yesText) {
+  ASK = onYes;
+  document.getElementById("askTitle").textContent = title;
+  document.getElementById("askBody").textContent = body;
+  document.getElementById("askNo").textContent = t("cancel");
+  document.getElementById("askYes").textContent = yesText || t("ok");
+  askwrap.hidden = false;
+  requestAnimationFrame(() => askwrap.classList.add("open"));
+  document.getElementById("askNo").focus();
+}
+function closeAsk() {
+  ASK = null;
+  askwrap.classList.remove("open");
+  setTimeout(() => { askwrap.hidden = true; }, 220);
+}
+document.getElementById("askNo").addEventListener("click", closeAsk);
+document.getElementById("askYes").addEventListener("click", () => {
+  const yes = ASK;
+  closeAsk();
+  if (yes) yes();
+});
+askwrap.addEventListener("click", e => { if (e.target.classList.contains("scrim")) closeAsk(); });
+addEventListener("keydown", e => { if (e.key === "Escape" && !askwrap.hidden) closeAsk(); });
+
+/* ==================================================================== PIN */
+let PIN = { mode: "unlock", phase: "check", entry: "", first: "", after: null };
+function openPin(mode, after) {
+  PIN = { mode, phase: mode === "change" ? "old" : mode === "set" ? "new1" : "check", entry: "", first: "", after: after || null };
+  drawPin();
+}
+function pinTitle() {
+  return PIN.phase === "check" || PIN.phase === "old" ? { h: t("pin_title"), m: t(PIN.phase === "old" ? "pin_old" : "pin_hint") }
+    : PIN.phase === "new1" ? { h: t("pin_new"), m: t("pin_new") } : { h: t("pin_again"), m: t("pin_again") };
+}
+function drawPin() {
+  const { h, m } = pinTitle();
+  openSheet(`<h3>${esc(h)}</h3><p class="meta">${esc(m)}</p>
+    <div class="pindots" id="pdots"><i></i><i></i><i></i><i></i></div>
+    <div class="keys" id="pkeys">${[1,2,3,4,5,6,7,8,9].map(n => `<button data-pin="${n}">${n}</button>`).join("")}
+      <button class="fn" data-pin="cancel">${esc(t("cancel"))}</button><button data-pin="0">0</button>
+      <button class="fn" data-pin="del">⌫</button></div>`);
+  paint();
+  document.getElementById("pkeys").addEventListener("click", e => {
+    const b = e.target.closest("[data-pin]"); if (!b) return;
+    const v = b.dataset.pin;
+    if (v === "cancel") { PIN.after = null; closeSheet(); render(); return; }
+    if (v === "del") { PIN.entry = PIN.entry.slice(0, -1); return paint(); }
+    if (PIN.entry.length >= 4) return;
+    PIN.entry += v; paint();
+    if (PIN.entry.length === 4) setTimeout(pinAdvance, 170);
+  });
+  function paint() { document.querySelectorAll("#pdots i").forEach((d, i) => d.classList.toggle("on", i < PIN.entry.length)); }
+  function bad(msg) {
+    const d = document.getElementById("pdots");
+    d.classList.add("shake"); toast(msg);
+    setTimeout(() => { d?.classList.remove("shake"); }, 380);
+    PIN.entry = ""; setTimeout(paint, 200);
+  }
+  function grant() { M.pin.locked = false; M.pin.until = Date.now() + 600000; closeSheet(); render(); toast(t("unlocked_left", { t: fmtLeft(600000) })); if (PIN.after) { const f = PIN.after; PIN.after = null; f(); } }
+  function pinAdvance() {
+    const e = PIN.entry;
+    const toNew1 = () => {
+      PIN.phase = "new1"; PIN.entry = ""; paint();
+      sheet.querySelector("h3").textContent = t("pin_new");
+      sheet.querySelector(".meta").textContent = t("pin_new");
+    };
+    // "check" gates every write, "old" gates a PIN change: both must ask the server, never a value in the page.
+    if (PIN.phase === "check" || PIN.phase === "old") {
+      return verifyPin(e, PIN.phase === "check" ? grant : toNew1, () => bad(t("pin_wrong")));
+    }
+    if (PIN.phase === "new1") { PIN.first = e; PIN.phase = "new2"; PIN.entry = ""; paint(); sheet.querySelector("h3").textContent = t("pin_again"); sheet.querySelector(".meta").textContent = t("pin_again"); return; }
+    if (e !== PIN.first) { PIN.phase = "new1"; PIN.first = ""; bad(t("pin_mismatch")); return; }
+    // The PIN save bypasses send(): the session is still locked until this very write succeeds.
+    const saved = () => { M.pin.locked = false; M.pin.until = now() + 600000; toast(t("pin_saved")); closeSheet(); render(); };
+    const r = api("stime/pin", { code: e });
+    if (isAsync(r)) r.then(saved, () => {}); else saved();
+  }
+}
+document.getElementById("lockbtn").onclick = () => {
+  if (!unlocked()) return openPin("unlock");
+  send("stime/lock", {}, t("locked_ok"));
+};
+
+/* ==================================================================== render */
+const ICONS = {
+  today: '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/></svg>',
+  groups: '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="3" width="7.5" height="7.5" rx="2"/><rect x="13.5" y="3" width="7.5" height="7.5" rx="2"/><rect x="3" y="13.5" width="7.5" height="7.5" rx="2"/><rect x="13.5" y="13.5" width="7.5" height="7.5" rx="2"/></svg>',
+  apps: '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2.5" y="4" width="19" height="13" rx="2.5"/><path d="M8.5 20.5h7"/></svg>',
+  settings: '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.8v2.6M12 18.6v2.6M2.8 12h2.6M18.6 12h2.6M5.4 5.4l1.9 1.9M16.7 16.7l1.9 1.9M18.6 5.4l-1.9 1.9M7.3 16.7l-1.9 1.9"/></svg>',
+  chev: '<svg class="chev" width="8" height="13" viewBox="0 0 8 13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1.6 1.6L6.4 6.5 1.6 11.4"/></svg>',
+  tick: '<svg class="tick" width="15" height="15" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 10.5l4 4 9-9"/></svg>',
+  lock: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><rect x="4.5" y="10.5" width="15" height="10" rx="2.5"/><path d="M8 10.5V7a4 4 0 018 0v3.5"/></svg>',
+  plus: '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>',
+  moon: '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M20.5 14.8A8.5 8.5 0 019.2 3.5a8.5 8.5 0 1011.3 11.3z"/></svg>',
+  play: '<svg width="8" height="10" viewBox="0 0 10 12" fill="currentColor"><path d="M0 0l10 6-10 6z"/></svg>',
+  versions: '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.2 3.6 7.4 12 11.6l8.4-4.2z"/><path d="M3.6 12.3 12 16.5l8.4-4.2"/><path d="M3.6 16.8 12 21l8.4-4.2"/></svg>',
+};
+const TABS = ["today", "groups", "apps", "versions", "settings"];
+const S = { tab: "today", filter: "all", q: "", selecting: false, picked: new Set(), scroll: {} };
+
+function render() {
+  document.getElementById("devline").textContent = t("dev_online", { name: M.device.name });
+  document.getElementById("tabs").innerHTML = TABS.map(x =>
+    `<button role="tab" data-tab="${x}" aria-selected="${S.tab === x}">${ICONS[x]}<span>${esc(t("tab_" + x))}</span></button>`).join("");
+  TABS.forEach(x => { document.getElementById("s-" + x).hidden = x !== S.tab; });
+  document.getElementById("main").classList.toggle("selecting", S.selecting && S.tab === "apps");
+  document.querySelectorAll("[data-i18n]").forEach(el => { el.textContent = t(el.dataset.i18n); });
+  document.querySelectorAll("[data-i18n-placeholder]").forEach(el => { el.placeholder = t(el.dataset.i18nPlaceholder); });
+  document.documentElement.lang = LANG;
+  document.title = "Aerial " + t("title");
+  const lb = document.getElementById("lockbtn");
+  lb.textContent = unlocked() ? t("lock_now") : t("pin_setup");
+  const ng = document.querySelector('[data-act="newgrp"]'); if (ng) ng.textContent = t("new_group");
+  const md = document.getElementById("mode");
+  if (md) { md.textContent = LIVE ? t("mode_live") : t("mode_demo"); md.className = "pill" + (LIVE ? " ok" : ""); }
+  ({ today: renderToday, groups: renderGroups, apps: renderApps, versions: renderVersions, settings: renderSettings })[S.tab]();
+  renderBar();
+}
+function show(tab) {
+  if (S.selecting && tab !== "apps") { S.selecting = false; S.picked.clear(); CTX.afterNew = null; }
+  S.scroll[S.tab] = scrollY; S.tab = tab;
+  history.replaceState(null, "", "#" + tab);
+  localStorage.setItem("aerial-stime-tab", tab);
+  render();
+  scrollTo({ top: S.scroll[tab] || 0 });
+}
+
+function todayFigures() {
+  const used = usedMs(), cap = capMin(), bed = bedtimeNow();
+  const p = cap ? pctOf(used, cap * MIN) : pctOf(used, 4 * HOUR);
+  const color = cap && p >= 1 ? "var(--danger)" : cap && p >= .85 ? "var(--warn)" : "var(--tint)";
+  const over = cap && used >= cap * MIN;
+  const stateHtml = !cap ? `<span class="state" style="color:var(--secondary)">${ICONS.moon} ${esc(bed.text)}</span>`
+    : over ? `<span class="state" style="color:var(--danger)">${ICONS.lock} ${esc(t("over_left", { t: fmtLeft(used - cap * MIN) }))}</span>`
+    : `<span class="state" style="color:${p >= .85 ? "var(--warn)" : "var(--ok)"}">${esc(t("left", { t: fmtLeft(cap * MIN - used) }))}</span>`;
+  return { used, cap, p, color, bed, stateHtml };
+}
+function renderToday() {
+  const { used, cap, p, color, bed, stateHtml } = todayFigures();
+  // A parent adding time here is not bound by the TV's own daily request cap (CLIENTS.md §4).
+  const step = M.global.extendPolicy.step;
+  const C = 2 * Math.PI * 52;
+  document.getElementById("globalcard").innerHTML = `
+    <h3>${esc(t("tab_today"))} · ${esc(new Date().toLocaleDateString(LANG === "zh" ? "zh-CN" : "en-GB", { month: "long", day: "numeric", weekday: "short" }))}</h3>
+    <div class="ringwrap">
+      <div class="ringbox"><svg class="ring" viewBox="0 0 120 120"><circle class="bgc" cx="60" cy="60" r="52"/>
+        <circle class="fgc" id="gring" cx="60" cy="60" r="52" style="stroke:${color};stroke-dasharray:${C.toFixed(1)};stroke-dashoffset:${(C * (1 - p)).toFixed(1)}"/></svg>
+        <div class="ringpct" id="gpct" style="color:${color}">${cap ? Math.round(p * 100) + "%" : "∞"}</div></div>
+      <div class="ringnum">
+        <b id="gused">${esc(fmtDur(used))} <small>${esc(t("used_suffix"))}</small></b>
+        <span class="of">${esc(cap ? t("of_limit", { limit: fmtLimit(cap) }) : t("no_limit_set"))}</span>
+        <span id="gstate" style="display:contents">${stateHtml}</span>
+      </div>
+    </div>
+    <p class="foot" style="margin:16px 2px 0">${esc(t("quick_add"))}</p>
+    <div class="quick">${[step, step * 2, step * 4].map(m =>
+      `<button class="btn" data-act="addg:${m}">+${m}</button>`).join("")}</div>
+    <p class="foot" id="gfoot" style="margin:10px 2px 0;color:var(--secondary)">${esc(t("extend_used", { n: M.extendUsed }))}</p>`;
+
+  const cur = M.current, curG = grp(gidOf(cur.pkg)), blocks = [];
+  if (!cur.pkg) blocks.push(`<div class="card"><h3>${esc(t("now_playing"))}</h3><p class="empty" style="padding:0">${esc(t("now_none"))}</p></div>`);
+  const sub = curG ? (curG.blocked ? t("now_blocked") : t("now_in_group", { name: gname(curG), t: fmtDur(gUsed(curG)) })) : t("now_ungrouped");
+  if (cur.pkg) blocks.push(`<div class="card"><h3>${esc(t("now_playing"))}</h3>
+    <div class="item" style="padding:0;min-height:0">${icon(cur.pkg)}<div class="txt tnum">
+      <span style="font-weight:500;display:flex;align-items:center;gap:6px">${ICONS.play} ${esc(nameOf(cur.pkg))}</span>
+      <span class="sub">${esc(sub)}</span>${curG ? barStyle(gUsed(curG), curG.dailyMinutes, curG.color) : ""}</div>
+      <span class="val tnum" id="curin">${esc(fmtDur(Date.now() - cur.since))}</span></div></div>`);
+  const ex = liveEx();
+  if (ex.length) blocks.push(`<div class="card"><h3>${esc(t("exceptions"))}</h3>
+    ${ex.map(e => { const eg = e.scope === "global" ? null : grp(e.gid);
+      // A pass opened on the TV with the PIN is not a parent's addition: it gets its own name here,
+      // and it comes back through the same Revoke switch as everything else (CLIENTS.md §4).
+      const daypass = e.by === "tv-pin";
+      const who = daypass ? t("ex_daypass") : eg ? t("exception_group", { name: gname(eg) }) : t("exception_global");
+      const sub = daypass ? t("ex_daypass_sub", { at: clockOf(e.expiresAt) }) : t("exception_at", { what: "+" + e.minutes, at: clockOf(e.expiresAt) });
+      return `<div class="item" style="padding:0;min-height:0"><span class="dot" style="background:${daypass ? "var(--warn)" : eg ? eg.color : "var(--tint)"}"></span>
+        <div class="txt"><span style="font-weight:500">${esc(who)}</span><span class="sub">${esc(sub)}</span></div>
+        <span class="pill warn tnum">${esc(t("exception_left", { t: fmtLeft(e.expiresAt - now()) }))}</span>
+        <button class="link sm" data-act="rev:${e.id}">${esc(t("revoke"))}</button></div>`; }).join("")}</div>`);
+  blocks.push(`<button class="card" style="width:100%;border:0;text-align:left;cursor:pointer;display:flex;gap:10px;align-items:center;padding:15px 16px" data-act="gotab:settings">
+    <span style="color:var(--secondary);flex-shrink:0">${ICONS.moon}</span>
+    <span class="txt" style="font-size:15px">${esc(bed.text)}</span>${ICONS.chev}</button>`);
+  // The way out of an accidental “all day”: clear today and take every pass back in one press.
+  blocks.push(`<div class="row"><button class="btn plain" style="color:var(--danger)" data-act="recover">${esc(t("reset_today"))}</button></div>`);
+  document.getElementById("livecards").innerHTML = blocks.join("");
+
+  const rows = M.groups.map(g => {
+    const u = gUsed(g), exx = exFor(g.id), over2 = !exx && g.dailyMinutes != null && u >= g.dailyMinutes * MIN;
+    const pill = g.blocked ? ["", t("g_blocked")] : over2 ? ["over", t("g_over")]
+      : g.dailyMinutes == null ? ["ok", t("g_unlimited")]
+      : g.dailyMinutes * MIN - u <= 5 * MIN ? ["warn", t("g_soon", { t: fmtLeft(g.dailyMinutes * MIN - u) })] : ["", t("g_fine")];
+    return `<button class="item hasicon" data-act="grp:${g.id}">
+      <span class="gicon" style="background:${g.color};width:38px;height:38px;border-radius:10px;font-size:15px">${esc(glyph(gname(g)))}</span>
+      <span class="txt">${esc(gname(g))}
+        <span class="sub" style="display:flex;gap:6px;align-items:center">${esc(t("g_members", { n: g.members.length }))} · ${g.dailyMinutes == null ? esc(t("g_used_of", { used: fmtDur(u), limit: "∞" })) : esc(t("g_used_of", { used: fmtDur(u), limit: fmtLimit(g.dailyMinutes) }))}</span>
+        ${barStyle(u, g.dailyMinutes, g.color)}</span>
+      ${pill[1] ? `<span class="pill ${pill[0]}">${esc(pill[1])}</span>` : ""}${ICONS.chev}</button>`;
+  });
+  const un = APPS.filter(a => !gidOf(a.pkg)), uu = un.reduce((a, x) => a + (M.byApp[x.pkg] || 0), 0);
+  rows.push(`<button class="item hasicon" data-act="fil:ungrouped">
+    <span class="gicon" style="background:var(--fill);color:var(--secondary);width:38px;height:38px;border-radius:10px">…</span>
+    <span class="txt">${esc(t("ungrouped_row"))}<span class="sub">${esc(t("ungrouped_sub", { n: un.length, t: fmtDur(uu) }))}</span></span>${ICONS.chev}</button>`);
+  document.getElementById("grouplist").innerHTML = rows.join("");
+
+  const capMs = (cap || 240) * MIN;
+  const days = [...Array(7)].map((_, i) => {
+    const d = new Date(); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() - (6 - i));
+    return { lab: t("d_" + ["sun", "mon", "tue", "wed", "thu", "fri", "sat"][d.getDay()]), ms: i === 6 ? used : M.week[i] * MIN, today: i === 6 };
+  });
+  const max = Math.max(capMs, ...days.map(d => d.ms));
+  document.getElementById("chart").innerHTML = days.map(d =>
+    `<div class="col${d.today ? " today" : ""}" title="${esc(fmtDur(d.ms))}">
+      <div class="stem" style="height:${Math.max(4, d.ms / max * 74).toFixed(1)}px;background:${d.ms >= capMs ? "var(--danger)" : d.today ? "" : "var(--fill)"}"></div>
+      <span class="lab">${esc(d.lab)}</span></div>`).join("");
+}
+
+function renderGroups() {
+  const host = document.getElementById("groupcards");
+  if (!M.groups.length) {
+    host.innerHTML = `<button class="item" data-act="newgrp"><div class="txt">${esc(t("no_groups_yet"))}</div>${ICONS.chev}</button>`;
+    return;
+  }
+  host.innerHTML = M.groups.map(g => {
+    const u = gUsed(g), ex = exFor(g.id);
+    const tags = [];
+    if (g.blocked) tags.push(["", t("g_blocked")]);
+    if (g.bedtimeExempt) tags.push(["ok", t("g_exempt")]);
+    if (ex) tags.push(["warn", "+" + ex.minutes]);
+    if (!g.blocked && !ex && g.dailyMinutes != null && u >= g.dailyMinutes * MIN) tags.push(["over", t("g_over")]);
+    return `<button class="item hasicon" data-act="grp:${g.id}" style="align-items:flex-start;padding:14px 16px">
+      <span class="gicon" style="background:${g.color}">${esc(glyph(gname(g)))}</span>
+      <span class="txt" style="padding-top:1px">${esc(gname(g))}
+        <span class="sub">${esc(t("g_members", { n: g.members.length }))} · ${g.dailyMinutes == null ? esc(t("g_used_of", { used: fmtDur(u), limit: "∞" })) : esc(t("g_used_of", { used: fmtDur(u), limit: fmtLimit(g.dailyMinutes) }))}</span>
+        ${barStyle(u, g.dailyMinutes, g.color)}
+        ${tags.length ? `<span class="sub" style="display:flex;gap:6px;margin-top:8px">${tags.map(x => `<span class="pill ${x[0]}">${esc(x[1])}</span>`).join("")}</span>` : ""}</span>
+      ${ICONS.chev}</button>`;
+  }).join("");
+}
+
+/* How long ago the TV reported its app list: the list is the TV's own, so the page says how fresh
+   it is, and the button beside it asks for a fresh one on the TV's next heartbeat. */
+function agoText(ms) {
+  const m = Math.round((Date.now() - ms) / 60000);
+  if (m < 1) return t("ago_now");
+  if (m < 60) return t("ago_min", { n: m });
+  const h = Math.round(m / 60);
+  return h < 24 ? t("ago_hour", { n: h }) : t("ago_day", { n: Math.round(h / 24) });
+}
+
+function renderApps() {
+  const fs = [["all", t("filter_all")], ["ungrouped", t("filter_ungrouped")], ["managed", t("filter_managed")], ["used", t("filter_used")]];
+  const dev = M.device || {};
+  const when = dev.appsAt ? t("apps_updated", { ago: agoText(dev.appsAt) }) : t("apps_never");
+  document.getElementById("appsrc").innerHTML = `<button class="item" data-act="apprefresh">
+      <span class="txt">${esc(t("apps_source"))}<span class="sub">${esc(when)}${dev.appsWantedAt ? " · " + esc(t("apps_refreshing")) : ""}</span></span>
+      <span class="val">${esc(t("apps_refresh"))}</span></button>`;
+  document.getElementById("appfilter").innerHTML = fs.map(([k, l]) =>
+    `<button class="chip" data-act="fil:${k}" aria-pressed="${S.filter === k}">${esc(l)}</button>`).join("")
+    + `<button class="chip" data-act="seltog" aria-pressed="${S.selecting}" style="margin-left:auto">${esc(S.selecting ? t("done") : t("select"))}</button>`;
+  document.getElementById("selbtn").hidden = S.selecting;
+  let list = APPS.filter(a => !S.q || nameOf(a.pkg).toLowerCase().includes(S.q.toLowerCase()) || a.pkg.toLowerCase().includes(S.q.toLowerCase()));
+  if (S.filter === "ungrouped") list = list.filter(a => !gidOf(a.pkg));
+  if (S.filter === "managed") list = list.filter(a => gidOf(a.pkg));
+  if (S.filter === "used") list = list.filter(a => (M.byApp[a.pkg] || 0) > 0);
+  list = [...list].sort((a, b) => (gidOf(a.pkg) || "zzz").localeCompare(gidOf(b.pkg) || "zzz") || (M.byApp[b.pkg] || 0) - (M.byApp[a.pkg] || 0));
+  document.getElementById("appfoot").textContent = t("app_foot", { total: APPS.length, managed: APPS.filter(a => gidOf(a.pkg)).length });
+  document.getElementById("applist").innerHTML = list.length ? list.map(a => {
+    const g = grp(gidOf(a.pkg)), u = M.byApp[a.pkg] || 0, on = S.picked.has(a.pkg);
+    const rule = g ? (g.blocked ? t("g_blocked") + " · " : "") + (g.dailyMinutes == null ? t("app_rule_none", { name: gname(g) }) : t("app_rule", { name: gname(g), limit: fmtLimit(g.dailyMinutes) })) : t("app_ungrouped");
+    return `<button class="item${on ? " on" : ""}" data-act="${S.selecting ? "pick:" + a.pkg : "approw:" + a.pkg}">
+      ${S.selecting ? `<span class="box${on ? " on" : ""}" aria-hidden="true"></span>` : icon(a.pkg)}
+      <span class="txt">${esc(nameOf(a.pkg))}<span class="sub">${esc(rule)}</span></span>
+      <span class="val tnum">${u ? esc(fmtDur(u)) : `<span style="opacity:.55">${esc(t("app_never"))}</span>`}</span>
+      ${S.selecting ? "" : ICONS.chev}</button>`;
+  }).join("") : `<p class="empty">${esc(t("no_groups_yet"))}</p>`;
+}
+
+function renderSettings() {
+  const gd = M.global.dailyMinutes, b = M.global.bedtime, ep = M.global.extendPolicy, eb = M.global.eyeBreak;
+  document.getElementById("setdaily").innerHTML = ["weekday", "weekend"].map(k =>
+    `<button class="item" data-act="cap:${k}"><span class="txt">${esc(t("set_" + k))}${k === (isWeekend() ? "weekend" : "weekday") ? `<span class="sub">${esc(new Date().toLocaleDateString(LANG === "zh" ? "zh-CN" : "en-GB", { weekday: "long" }))}</span>` : ""}</span>
+      <span class="val">${esc(fmtLimit(gd[k]))}</span>${ICONS.chev}</button>`).join("");
+  document.getElementById("setbedtime").innerHTML = `
+    <label class="item"><span class="txt">${esc(t("bedtime_switch"))}<span class="sub">${esc(bedtimeNow().text)}</span></span>
+      <input class="switch" type="checkbox" data-on="bedon" ${b.enabled ? "checked" : ""}></label>
+    <div class="item"><span class="txt">${esc(t("bedtime_from"))}</span><input type="time" value="${b.from}" data-on="bedfrom" ${b.enabled ? "" : "disabled"}></div>
+    <div class="item"><span class="txt">${esc(t("bedtime_to"))}</span><input type="time" value="${b.to}" data-on="bedto" ${b.enabled ? "" : "disabled"}></div>`;
+  document.getElementById("setweek").innerHTML =
+    `<h2 style="margin-top:18px">${esc(t("bedtime_days"))}</h2><div class="chips" style="padding:0;justify-content:space-between">` +
+    [1, 2, 3, 4, 5, 6, 7].map(d => `<button class="chip wk" data-act="bedday:${d}" aria-pressed="${b.weekdays.includes(d)}" ${b.enabled ? "" : "disabled"}>${esc(t("d_" + ["sun", "mon", "tue", "wed", "thu", "fri", "sat"][d % 7]))}</button>`).join("") + "</div>";
+  document.getElementById("setoverflow").innerHTML = [["home", "ov_home", "ov_home_sub"], ["prompt", "ov_prompt", null], ["screensaver", "ov_screensaver", null]].map(([v, k, sub]) =>
+    `<button class="item" role="radio" aria-checked="${M.global.overflow === v}" data-act="ov:${v}"><span class="txt">${esc(t(k))}${sub ? `<span class="sub">${esc(t(sub))}</span>` : ""}</span>${ICONS.tick}</button>`).join("");
+  document.getElementById("setbreak").innerHTML = `
+    <label class="item"><span class="txt">${esc(t("eye_break"))}</span><input class="switch" type="checkbox" data-on="ebon" ${eb.enabled ? "checked" : ""}></label>
+    <div class="item"><span class="txt">${esc(t("eye_every"))}</span><span class="stepper"><button data-act="eb:-5:every">−</button><b>${eb.every}</b><button data-act="eb:5:every">＋</button></span></div>
+    <div class="item"><span class="txt">${esc(t("eye_rest"))}</span><span class="stepper"><button data-act="eb:-5:rest">−</button><b>${eb.rest}</b><button data-act="eb:5:rest">＋</button></span></div>`;
+  document.getElementById("setextend").innerHTML = `
+    <label class="item"><span class="txt">${esc(t("extend_allow"))}</span><input class="switch" type="checkbox" data-on="epallow" ${ep.allowRequest ? "checked" : ""}></label>
+    <div class="item"><span class="txt">${esc(t("extend_step"))}</span><span class="stepper"><button data-act="ep:-5:step">−</button><b>${ep.step}</b><button data-act="ep:5:step">＋</button></span></div>
+    <div class="item"><span class="txt">${esc(t("extend_max"))}</span><span class="stepper"><button data-act="ep:-1:max">−</button><b>${ep.max}</b><button data-act="ep:1:max">＋</button></span></div>`;
+  document.getElementById("setpin").innerHTML = `
+    <button class="item" data-act="pinbtn"><span class="txt">${esc(M.pin.set ? t("pin_change") : t("pin_setup"))}</span>
+      <span class="val">${M.pin.set ? "••••" : ""}</span>${ICONS.chev}</button>
+    <div class="item"><span class="txt" style="color:var(--secondary);font-size:13px">${esc(M.pin.set ? t("pin_foot") : t("pin_needed"))}</span></div>
+    <div class="item"><span class="txt">${esc(unlocked() ? t("unlocked_left", { t: fmtLeft(grantLeft()) }) : t("locked_ok"))}</span>
+      <span class="pill ${unlocked() ? "ok" : ""} tnum">${esc(unlocked() ? fmtLeft(grantLeft()) : "PIN")}</span></div>`;
+  document.getElementById("setdata").innerHTML = `
+    <div class="item"><span class="txt">${esc(t("perm_usage"))}</span><span class="pill ${M.ready.usageStats ? "ok" : "warn"}">${esc(M.ready.usageStats ? t("perm_on") : t("perm_off"))}</span></div>
+    <div class="item"><span class="txt">${esc(t("calc_note"))}</span><span class="val">${esc(t("calc_val"))}</span></div>
+    <button class="item danger" data-act="reset"><span class="txt">${esc(t("reset_data"))}</span></button>`;
+  document.getElementById("setlang").innerHTML = `<div class="item"><span class="txt">${esc(t("language"))}</span>
+    <span class="val">${LANGS.map(l => `<button class="link sm" data-act="lang:${l}" style="opacity:${LANG === l ? 1 : .4}">${l === "zh" ? "中文" : "English"}</button>`).join(" · ")}</span></div>`;
+  // Clients: rename in place, retire a real TV, and say whether enrolment is open at all.
+  const enrol = !!(M.ready && M.ready.enrolment), cid = curId();
+  const ds = M.devices.length ? M.devices : [{ id: cid, name: M.device.name, kind: M.device.kind || "demo", todayMs: usedMs(), online: false }];
+  document.getElementById("setdevices").innerHTML = `
+    <div class="item"><span class="txt">${esc(t("enrol"))}<span class="sub">${esc(enrol ? t("enrol_sub_on") : t("enrol_sub_off"))}</span></span>
+      <span class="pill ${enrol ? "ok" : ""}">${esc(enrol ? t("enrol_on") : t("enrol_off"))}</span></div>` +
+    ds.map(d => `<div class="item"><span class="dot" style="background:${d.online ? "var(--ok)" : "var(--tertiary)"}"></span>
+      <span class="txt">${esc(d.name || d.id)}<span class="sub">${d.id === cid ? esc(t("dev_current")) + " · " : ""}${esc(t("dev_today", { t: fmtDur(devTodayMs(d)) }))}</span></span>
+      <span class="val">${`<button class="link sm" data-act="renamedev:${esc(d.id)}">${esc(t("dev_rename"))}</button>`}${
+        d.kind === "demo" ? "" : ` · <button class="link sm dngr" data-act="deldev:${esc(d.id)}">${esc(t("dev_remove"))}</button>`}</span></div>`).join("");
+}
+
+/* ============================================================ version bank
+   The tab reads GET /api/stime/releases (§6.3) and writes through the page's one
+   api() shape, so a locked session replays the click after the PIN goes in — the
+   same path every other write here takes. A backend that will not answer never
+   empties the list: the last loaded rows stay on screen with a visible complaint. */
+const FLAVORS = ["standard", "guard"];
+const fmtSize = b => { const n = Number(b); if (!isFinite(n) || n <= 0) return "—";
+  return n >= 1048576 ? (n / 1048576).toFixed(1) + " MB" : n >= 1024 ? Math.round(n / 1024) + " KB" : n + " B"; };
+const fmtDate = ts => { const n = Number(ts); if (!isFinite(n) || n <= 0) return "—";
+  const d = new Date(n), p = x => String(x).padStart(2, "0");
+  return p(d.getMonth() + 1) + "-" + p(d.getDate()) + " " + p(d.getHours()) + ":" + p(d.getMinutes()); };
+const verLabel = r => !r ? "—" : (r.versionName || "?") + "(" + (r.versionCode == null ? "?" : r.versionCode) + ")";
+const flavorName = f => f === "standard" || f === "guard" ? t("flavor_" + f) : String(f || "—");
+/* Missing fields happen on builds that never reported a version: show 未知, never throw. */
+const devVerLine = d => {
+  const v = d.appVersion || (d.versionCode == null ? "" : String(d.versionCode));
+  return v ? v + (d.flavor ? " · " + d.flavor : "") : t("dev_unknown");
+};
+
+let R = {
+  current: { standard: "rel-82s", guard: "rel-82g" },
+  releases: [
+    { id: "rel-82g", flavor: "guard", versionName: "1.68", versionCode: 82, file: "aerial-guard-1.68-82.apk",
+      size: 3041288, createdAt: Date.now() - 3 * HOUR, devices: [], enabled: true,
+      notes: "守护版：TCL 上主页键不再被多屏互动的同意框抢走。\n下好的包不再被启动清理误删，点安装不用重下一遍。" },
+    { id: "rel-82s", flavor: "standard", versionName: "1.68", versionCode: 82, file: "aerial-standard-1.68-82.apk",
+      size: 2954112, createdAt: Date.now() - 3 * HOUR, devices: ["tv-mi"], enabled: true,
+      notes: "同上，standard 渠道。先给小米这台试两天。" },
+    { id: "rel-81g", flavor: "guard", versionName: "1.67", versionCode: 81, file: "aerial-guard-1.67-81.apk",
+      size: 3025511, createdAt: Date.now() - 6 * 864e5, devices: [], enabled: false, notes: "" },
+  ],
+  devices: [
+    { id: "tv-mi", name: "小米电视 EA55", kind: "tv", flavor: "standard", appVersion: "1.67", versionCode: 81, canUpdate: true },
+    { id: "tv-tcl", name: "TCL 55T7E", kind: "tv", flavor: "guard", appVersion: "1.68", versionCode: 82, canUpdate: false },
+    { id: "tv-old", name: "客厅旧盒子", kind: "demo", flavor: null, appVersion: null, versionCode: null, canUpdate: false },
+  ],
+  loaded: false, attempted: false, loading: false, failed: "", needPin: false,
+};
+const relOf = id => R.releases.find(x => x.id === id) || null;
+const inForce = r => !!r && R.current[r.flavor] === r.id;
+
+function loadReleases(quiet) {
+  if (!LIVE) { R.loaded = true; R.failed = ""; if (S.tab === "versions") render(); return Promise.resolve(true); }
+  if (R.loading) return R.loading;
+  R.attempted = true;
+  R.loading = fetch(apiUrl("stime/releases") + (GRANT ? "?grant=" + encodeURIComponent(GRANT) : ""), { headers: { Accept: "application/json" } })
+    // The backend says what went wrong in Chinese; pass that sentence through, never a bare code.
+    .then(r => r.json().catch(() => ({})).then(b => {
+      if (r.ok && b && Array.isArray(b.releases)) return b;
+      throw new Error((b && b.error) || "http " + r.status);
+    }))
+    .then(b => {
+      R.current = b.current || {}; R.releases = b.releases; R.devices = Array.isArray(b.devices) ? b.devices : [];
+      R.loaded = true; R.failed = ""; R.needPin = false; R.loading = false;
+      if (S.tab === "versions") render();
+      return true;
+    }, e => {
+      R.loading = false;
+      // 401 "locked" is not a broken backend: this one endpoint needs the parent session while the
+      // rest of the page reads fine, and calling it "the backend did not answer" sent the owner
+      // looking for a fault that was never there (户主, 2026-10-31).
+      R.needPin = /locked/i.test((e && e.message) || "");
+      R.failed = R.needPin ? "" : ((e && e.message) || "error");
+      if (!quiet && !R.needPin) toast(t("ver_fail"));
+      if (S.tab === "versions") render();
+      return false;
+    });
+  return R.loading;
+}
+
+/* Offline demo only: the same four writes, applied to the mock bank. */
+function mockRel(path, b) {
+  const r = relOf(b && b.id); if (!r) return {};
+  if (path === "stime/release/enable") {
+    R.releases.forEach(x => { if (x.flavor === r.flavor) x.enabled = x.id === r.id; });
+    R.current[r.flavor] = r.id;
+  } else if (path === "stime/release/disable") {
+    r.enabled = false;
+    if (R.current[r.flavor] === r.id) R.current[r.flavor] = null;
+  } else if (path === "stime/release/target") {
+    r.devices = String(b.devices || "").split(",").filter(Boolean);
+  } else if (path === "stime/release/del") {
+    R.releases = R.releases.filter(x => x.id !== r.id);
+    if (R.current[r.flavor] === r.id) R.current[r.flavor] = null;
+  }
+  return {};
+}
+
+/* api() carries the grant, the form body and the needPin toast; openPin replays the click
+   afterwards, exactly like updGroup(). The extra argument hands the server's own fields
+   (fileNote on delete) back to the caller, which is the only thing send() could not carry. */
+function relWrite(path, body, msg, after) {
+  const go = () => {
+    const done = st => loadReleases(true).then(() => {
+      render();
+      if (after) after(st || {}); else toast(typeof msg === "function" ? msg(st || {}) : msg);
+      return true;
+    });
+    if (!LIVE) return done(mockRel(path, body));
+    const r = api(path, body);
+    return isAsync(r) ? r.then(done, () => false) : done(r);
+  };
+  if (!unlocked()) { openPin("unlock", go); return false; }
+  return go();
+}
+
+function renderVersions() {
+  if (LIVE && !R.attempted && !R.loading) loadReleases();
+  /* Until the first load lands, a live page shows the empty state — never the offline demo rows. */
+  const live = !LIVE || R.loaded;
+  const bank = live ? R.releases : [], devices = live ? R.devices : [], cur = live ? R.current : {};
+  document.getElementById("vercards").innerHTML = FLAVORS.map(fl => {
+    const r = relOf(cur[fl]);
+    // Nothing is loaded yet (locked, or the first load is still out): "未发布" is a claim about the
+    // household's build, and saying it before anything arrived is the same false alarm as the
+    // "backend did not answer" line.
+    const wait = `<span style="font-size:16px;font-weight:500;color:var(--secondary)">${esc(t("ver_noload_short"))}</span>`;
+    return `<div class="card"><h3>${esc(flavorName(fl))} · ${esc(t("ver_current"))}</h3>
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        <b class="mono" style="font-size:21px;letter-spacing:-.01em">${!live ? wait : r ? esc(verLabel(r))
+          : `<span style="font-size:16px;font-weight:500;color:var(--secondary)">${esc(t("ver_none"))}</span>`}</b>
+        ${live && r ? `<span class="pill ok">${esc(t("ver_enabled"))}</span>` : ""}</div>
+      <span class="vermeta">${!live ? "" : r ? esc(t("ver_uploaded")) + " " + esc(fmtDate(r.createdAt)) + " · " +
+        esc(r.devices && r.devices.length ? t("ver_canary_n", { n: r.devices.length }) : t("ver_all"))
+        : esc(t("ver_none_sub"))}</span></div>`;
+  }).join("");
+
+  document.getElementById("vernote").innerHTML = R.needPin
+    ? `<p class="verfail needpin"><span>${esc(t("ver_need_pin"))}</span>
+        <button class="link" data-act="rpin">${esc(t("ver_unlock"))}</button></p>`
+    : R.failed
+    ? `<p class="verfail"><span>${esc(t("ver_fail"))} · ${esc(R.failed)}</span>
+        <button class="link" data-act="rretry">${esc(t("ver_retry"))}</button></p>` : "";
+
+  document.getElementById("verlist").innerHTML = bank.map(r => {
+    const on = inForce(r);
+    return `<div class="item verrow">
+      <span class="pill fchip${r.flavor === "guard" ? " warn" : ""}">${esc(flavorName(r.flavor))}</span>
+      <div class="txt">
+        <span class="mono" style="font-weight:600;font-size:15px">${esc(verLabel(r))}</span>
+        <span class="vermeta">
+          <span class="mono">${esc(fmtSize(r.size))}</span><span>·</span>
+          <span>${esc(fmtDate(r.createdAt))}</span><span>·</span>
+          <span>${esc(r.devices && r.devices.length ? t("ver_canary_n", { n: r.devices.length }) : t("ver_all"))}</span>
+          <span class="pill ${on ? "ok" : ""}">${esc(t(on ? "ver_enabled" : "ver_off"))}</span>
+        </span>
+        <details class="notes"><summary>${esc(t("ver_notes"))}</summary><p>${esc(r.notes || t("ver_notes_none"))}</p></details>
+      </div>
+      <div class="vacts">
+        <button class="link sm" data-act="${on ? "rdisable:" : "renable:"}${r.id}">${esc(t(on ? "ver_disable" : "ver_enable"))}</button>
+        <button class="link sm" data-act="rtarget:${r.id}">${esc(t("ver_target"))}</button>
+        <button class="link sm dngr" data-act="rdel:${r.id}">${esc(t("ver_del"))}</button>
+      </div></div>`;
+  }).join("") || `<p class="empty">${esc(t(live ? "ver_empty" : "ver_noload"))}</p>`;
+
+  document.getElementById("verfoot").innerHTML = bank.length
+    ? `${esc(t("ver_count", { n: bank.length }))} <button class="link sm" data-act="rreload">${esc(t("ver_refresh"))}</button>` : "";
+
+  document.getElementById("devlist").innerHTML = devices.length ? devices.map(d => `
+    <div class="item"><span class="dot" style="background:${d.canUpdate ? "var(--warn)" : "var(--tertiary)"}"></span>
+      <div class="txt">${esc(d.name || d.id)}<span class="sub mono">${esc(devVerLine(d))}</span></div>
+      ${d.canUpdate ? `<span class="pill warn">${esc(t("dev_can"))}</span>` : ""}</div>`).join("")
+    : `<p class="empty">${esc(t(live ? "dev_empty" : "dev_noload"))}</p>`;
+}
+
+function targetSheet(id) {
+  const r = relOf(id); if (!r) return;
+  const picked = new Set(r.devices || []);
+  openSheet(`<h3>${esc(t("ver_target"))}</h3>
+    <p class="meta mono">${esc(verLabel(r))} · ${esc(flavorName(r.flavor))}</p>
+    ${R.devices.length ? `<div class="list" id="tpick">${R.devices.map(d => `
+      <label class="item" data-dev="${esc(d.id)}"><span class="box${picked.has(d.id) ? " on" : ""}" aria-hidden="true"></span>
+        <span class="txt">${esc(d.name || d.id)}<span class="sub mono">${esc(devVerLine(d))}</span></span>
+        ${d.kind && d.kind !== "tv" ? `<span class="pill">${esc(d.kind)}</span>` : ""}</label>`).join("")}</div>`
+      : `<p class="empty">${esc(t("dev_empty"))}</p>`}
+    <p class="foot">${esc(t("ver_target_foot"))}</p>
+    <div class="row"><button class="btn plain" data-act="rall:${r.id}">${esc(t("ver_all_now"))}</button>
+      <button class="btn" data-act="rsave:${r.id}">${esc(t("save"))}</button></div>`);
+  const list = document.getElementById("tpick");
+  CTX.relPick = picked;                     // after openSheet(), which clears the sheet context
+  if (!list) return;
+  list.addEventListener("click", e => {
+    const it = e.target.closest("[data-dev]"); if (!it) return;
+    e.preventDefault();
+    const did = it.dataset.dev;
+    if (picked.has(did)) picked.delete(did); else picked.add(did);
+    it.querySelector(".box").classList.toggle("on", picked.has(did));
+  });
+}
+
+/* ==================================================================== sheets */
+function groupSheet(id) {
+  const g = grp(id); if (!g) return;
+  const u = gUsed(g);
+  CTX.gid = id;
+  openSheet(`<h3>${esc(gname(g))}</h3>
+    <p class="meta">${esc(t("g_members", { n: g.members.length }))} · ${g.dailyMinutes == null ? esc(t("g_used_of", { used: fmtDur(u), limit: "∞" })) : esc(t("g_used_of", { used: fmtDur(u), limit: fmtLimit(g.dailyMinutes) }))}</p>
+    <div style="max-width:280px;margin:0 auto 6px">${barStyle(u, g.dailyMinutes, g.color)}</div>
+    <div class="list" style="margin-top:14px">
+      <button class="item" data-act="glimit"><span class="txt">${esc(t("group_daily"))}</span><span class="val">${esc(fmtLimit(g.dailyMinutes))}</span>${ICONS.chev}</button>
+      <label class="item"><span class="txt">${esc(t("exempt_switch"))}<span class="sub">${esc(t("exempt_sub"))}</span></span><input class="switch" type="checkbox" data-on="gexempt" ${g.bedtimeExempt ? "checked" : ""}></label>
+      <label class="item"><span class="txt">${esc(t("allow_extend"))}<span class="sub">${esc(t("allow_extend_sub"))}</span></span><input class="switch" type="checkbox" data-on="gext" ${g.extendAllowed ? "checked" : ""}></label>
+      <label class="item"><span class="txt">${esc(t("block_group"))}<span class="sub">${esc(t("block_group_sub"))}</span></span><input class="switch" type="checkbox" data-on="gblock" ${g.blocked ? "checked" : ""}></label>
+    </div>
+    <div class="row">${[15, 30, 60].map(m => `<button class="btn plain" data-act="addgrp:${m}" ${g.extendAllowed ? "" : "disabled"}>+${m}</button>`).join("")}</div>
+    <h2 style="display:flex;align-items:center;justify-content:space-between;margin-right:2px">${esc(t("group_members"))}
+      <button class="link sm" data-act="gaddapp">${ICONS.plus} ${esc(t("group_add_app"))}</button></h2>
+    <div class="list">${g.members.length ? g.members.map(p =>
+      `<button class="item hasicon" data-act="approw:${p}">${icon(p, g.color)}<span class="txt">${esc(nameOf(p))}</span><span class="val tnum">${esc(fmtDur(M.byApp[p] || 0))}</span>${ICONS.chev}</button>`).join("")
+      : `<p class="empty">${esc(t("group_no_members"))}</p>`}</div>
+    <div class="row"><button class="btn plain" data-act="rngrp">${esc(t("group_name"))}</button>
+      <button class="btn plain" style="color:var(--danger)" data-act="delgrp">${esc(t("delete_group"))}</button></div>`);
+}
+function appSheet(pkg) {
+  const g = grp(gidOf(pkg)), u = M.byApp[pkg] || 0;
+  CTX.pkg = pkg;
+  openSheet(`<div class="shead">${icon(pkg, g ? g.color : undefined, 56)}</div>
+    <h3>${esc(nameOf(pkg))}</h3>
+    <p class="meta">${g ? esc(t("app_in_group", { name: gname(g) })) : esc(t("app_ungrouped"))} · ${esc(u ? fmtDur(u) : t("app_never"))}</p>
+    ${g ? barStyle(gUsed(g), g.dailyMinutes, g.color) : ""}
+    <div class="list" style="margin-top:16px">
+      <button class="item ${g ? "" : "tint"}" data-act="jgrp"><span class="txt">${esc(t("join_group"))}</span>${ICONS.chev}</button>
+      ${g ? `<button class="item" data-act="owngrp"><span class="txt">${esc(t("app_open_group"))}<span class="sub">${g.dailyMinutes == null ? esc(t("app_rule_none", { name: gname(g) })) : esc(t("app_rule", { name: gname(g), limit: fmtLimit(g.dailyMinutes) }))}</span></span>${ICONS.chev}</button>` : ""}
+    </div>
+    ${g ? `<div class="list"><button class="item danger" data-act="leavegrp"><span class="txt">${esc(t("app_leave_group", { name: gname(g) }))}</span></button></div>` : ""}
+    <p class="foot">${esc(pkg)}</p>`);
+}
+function joinSheet(pkgs, after) {
+  openSheet(`<h3>${esc(t("join_group"))}</h3>
+    <p class="meta">${esc(t("selected_n", { n: pkgs.length }))}${pkgs.filter(p => gidOf(p)).length ? " · " + esc(t("selected_move", { n: pkgs.filter(p => gidOf(p)).length })) : ""}</p>
+    ${M.groups.length ? `<div class="list">${M.groups.map(g => `<button class="item hasicon" data-act="into:${g.id}">
+      <span class="gicon" style="background:${g.color};width:32px;height:32px;border-radius:9px;font-size:14px">${esc(glyph(gname(g)))}</span>
+      <span class="txt">${esc(gname(g))}<span class="sub">${esc(t("g_members", { n: g.members.length }))}</span></span>${ICONS.chev}</button>`).join("")}</div>` : ""}
+    <div class="row"><button class="btn plain" data-act="newgrp:${pkgs.join(",")}">${ICONS.plus} ${esc(t("new_group"))}</button></div>`);
+  CTX.pkgs = pkgs; CTX.afterJoin = after;
+}
+function newGroupSheet(seedPkgs) {
+  let color = COLORS[M.groups.length % COLORS.length];
+  openSheet(`<h3>${esc(t("new_group"))}</h3>
+    <div class="list" style="margin-top:14px"><div class="item field">
+      <input id="gname" maxlength="12" placeholder="${esc(t("group_name"))}"></div></div>
+    <h2>${esc(t("group_color"))}</h2>
+    <div class="chips" id="cs" style="flex-wrap:wrap;padding:0">${COLORS.map(c =>
+      `<button class="swatch" data-color="${c}" style="background:${c};${c === color ? "box-shadow:0 0 0 2.5px var(--sheet),0 0 0 4.5px " + c : "box-shadow:0 0 0 .5px rgba(0,0,0,.12)"}"></button>`).join("")}</div>
+    <h2>${esc(t("group_presets"))}</h2>
+    <div class="list">${["video", "kid", "edu", "game", "tool", "news", "music"].map(c => {
+      const n = APPS.filter(a => a.cat === c).length;
+      return `<button class="item" data-act="preset:${c}"><span class="txt">${esc(t("cat_" + c))}</span><span class="val">${n}</span>${ICONS.chev}</button>`;
+    }).join("")}</div>
+    <div class="row"><button class="btn" id="gcreate">${esc(t("create"))}</button></div>`);
+  document.getElementById("cs").addEventListener("click", e => {
+    const b = e.target.closest("[data-color]"); if (!b) return;
+    color = b.dataset.color;
+    sheet.querySelectorAll("#cs .swatch").forEach(x => x.style.boxShadow = x.dataset.color === color ? `0 0 0 2.5px var(--sheet),0 0 0 4.5px ${color}` : "0 0 0 .5px rgba(0,0,0,.12)");
+  });
+  document.getElementById("gcreate").onclick = () => {
+    const v = document.getElementById("gname").value.trim();
+    if (!v) return toast(t("group_name"));
+    createGroup(v, color, seedPkgs);
+  };
+}
+function createGroup(name, color, pkgs) {
+  if (!unlocked()) return openPin("unlock", () => createGroup(name, color, pkgs));
+  const finish = gid => {
+    const join = pkgs && pkgs.length ? api("stime/group/members", { id: gid, pkgs: pkgs.join(","), mode: "move" }) : null;
+    const after = () => {
+      render();
+      toast(pkgs && pkgs.length ? t("created_group_with", { name, n: pkgs.length }) : t("created_group", { name }));
+      if (pkgs && pkgs.length) closeSheet(); else groupSheet(gid);
+      S.selecting = false; S.picked.clear();
+    };
+    if (isAsync(join)) join.then(after, () => {}); else after();
+  };
+  const r = api("stime/group/add", { name, color });
+  if (isAsync(r)) return r.then(st => finish(st.added));
+  finish(r.id);
+}
+/* Which TV this phone manages. Each row carries its own total and a live dot, so the bedroom set
+   is told apart from the living-room one before anything is changed on it. */
+function deviceSheet() {
+  const cid = curId();
+  const ds = M.devices.length ? M.devices : [{ id: cid, name: M.device.name, kind: M.device.kind || "demo", todayMs: usedMs(), online: false }];
+  openSheet(`<h3>${esc(t("dev_pick"))}</h3>
+    <p class="meta">${esc(t("dev_pick_sub"))}</p>
+    <div class="list">${ds.map(d => `<button class="item" role="radio" aria-checked="${d.id === cid}" data-act="pickdev:${esc(d.id)}">
+      <span class="dot" style="background:${d.online ? "var(--ok)" : "var(--tertiary)"}"></span>
+      <span class="txt">${esc(d.name || d.id)}<span class="sub">${esc(d.online ? t("dev_st_online") : t("dev_st_offline"))} · ${esc(t("dev_today", { t: fmtDur(devTodayMs(d)) }))}</span></span>
+      ${ICONS.tick}</button>`).join("")}</div>
+    <p class="foot">${esc(t("dev_pick_foot"))}</p>`);
+}
+function devRenameSheet(id) {
+  const d = devOf(id); if (!d) return;
+  openSheet(`<h3>${esc(t("dev_rename"))}</h3>
+    <div class="list" style="margin-top:14px"><div class="item field">
+      <input id="dvn" maxlength="40" value="${esc(d.name || "")}" placeholder="${esc(t("dev_name"))}" aria-label="${esc(t("dev_name"))}"></div></div>
+    <div class="row"><button class="btn" id="dvnok">${esc(t("save"))}</button></div>`);
+  document.getElementById("dvnok").onclick = () => {
+    const v = document.getElementById("dvn").value.trim();
+    if (!v) return toast(t("dev_name"));
+    closeSheet();                        // before send(): an expired PIN draws its keypad in here
+    send("stime/device/rename", { id, name: v }, () => t("dev_renamed", { name: v }));
+  };
+}
+/* Point the page at another client: remember it, then ask for that client's state. */
+function switchDevice(id) {
+  if (!id) return;
+  if (id === curId()) return closeSheet();
+  DEV = id; saveDevice(id);
+  closeSheet();
+  if (!LIVE) { syncMockDevice(); render(); return; }
+  fetchState().then(st => { hydrate(st); render(); }, () => render());
+}
+function renameSheet(g) {
+  openSheet(`<h3>${esc(t("group_name"))}</h3>
+    <div class="list" style="margin-top:14px"><div class="item field"><input id="rn" maxlength="12" value="${esc(gname(g))}"></div></div>
+    <div class="row"><button class="btn" id="rnok">${esc(t("ok"))}</button></div>`);
+  const go = () => {
+    const v = document.getElementById("rn").value.trim(); if (!v) return;
+    closeSheet();                       // before send(): see jgrp
+    send("stime/group/update", { id: g.id, patch: JSON.stringify({ name: { zh: v, en: v } }) }, () => t("updated_group", { name: v }));
+  };
+  document.getElementById("rnok").onclick = go;
+}
+function limitSheet(title, cur, after) {
+  const d = cur === null ? { on: true, h: 1, m: 0 } : { on: false, h: Math.min(23, Math.floor(cur / 60)), m: cur % 60 };
+  const col = (id, unit, max) => `<div class="dg"><div class="r">
+      <button class="arrow" data-d="${id}:-1" aria-label="-1 ${esc(unit)}">−</button>
+      <input id="${id}" type="number" inputmode="numeric" min="0" max="${max}" value="${id === "dh" ? d.h : d.m}" aria-label="${esc(unit)}">
+      <button class="arrow" data-d="${id}:1" aria-label="+1 ${esc(unit)}">＋</button>
+    </div><span class="u">${esc(unit)}</span></div>`;
+  openSheet(`<h3>${esc(title)}</h3><p class="dprev" id="dprev"></p>
+    <div class="dur">${col("dh", t("unit_hours"), 23)}${col("dm", t("unit_minutes"), 59)}</div>
+    <div class="list" style="margin-top:14px"><label class="item">
+      <span class="txt">${esc(t("unlimited_switch"))}</span><input class="switch" type="checkbox" data-on="dunlim" ${d.on ? "checked" : ""}></label></div>
+    <div class="row"><button class="btn" data-act="dsave">${esc(t("save"))}</button></div>
+    <p class="foot">${esc(t("limit_foot"))}</p>`);
+  CTX.dur = d; CTX.pickFn = after;
+  const clamp = v => parseInt(v, 10);
+  const sync = (which) => {
+    const ih = document.getElementById("dh"), im = document.getElementById("dm");
+    if (!ih || !im) { stopHold(); return; }
+    if (which === "in") { d.h = Math.max(0, Math.min(23, clamp(ih.value) || 0)); d.m = Math.max(0, Math.min(59, clamp(im.value) || 0)); }
+    else { ih.value = d.h; im.value = d.m; }
+    [ih, im].forEach(el => { el.disabled = d.on; });
+    sheet.querySelectorAll(".arrow").forEach(b => {
+      const [k, sign] = b.dataset.d.split(":"), val = k === "dh" ? d.h : d.m;
+      b.disabled = d.on || (sign === "-1" && val <= 0) || (sign === "1" && (k === "dh" ? val >= 23 : val >= 59));
+    });
+    const tot = d.h * 60 + d.m, prev = document.getElementById("dprev");
+    prev.textContent = d.on ? t("g_unlimited") : tot === 0 ? t("dur_zero") : fmtLimit(tot);
+    prev.style.color = !d.on && tot === 0 ? "var(--warn)" : "";
+  };
+  let holdTo, holdIv;
+  const stopHold = () => { clearTimeout(holdTo); clearInterval(holdIv); holdTo = holdIv = null; };
+  CTX.durSync = sync; CTX.durStop = stopHold;
+  sync();
+  // Hold to run: 23 hours is a long way to tap one step at a time.
+  sheet.querySelector(".dur").addEventListener("pointerdown", e => {
+    const b = e.target.closest(".arrow"); if (!b || b.disabled) return;
+    e.preventDefault();
+    stopHold();
+    const step = () => { const [k, sign] = b.dataset.d.split(":"), s = +sign * (k === "dh" ? 1 : 5);
+      if (k === "dh") d.h = Math.max(0, Math.min(23, d.h + s)); else d.m = Math.max(0, Math.min(59, d.m + s)); sync(); };
+    const release = () => { stopHold(); b.removeEventListener("pointerup", release); b.removeEventListener("pointercancel", release); };
+    step();
+    if (b.disabled) release();                       // held into the edge: stop running
+    else holdTo = setTimeout(() => { holdIv = setInterval(() => { step(); if (b.disabled) release(); }, 90); }, 340);
+    ["pointerup", "pointercancel", "pointerleave"].forEach(ev => b.addEventListener(ev, release, { once: true }));
+  });
+  ["dh", "dm"].forEach(id => document.getElementById(id).addEventListener("input", () => sync("in")));
+  ["dh", "dm"].forEach(id => document.getElementById(id).addEventListener("blur", () => sync()));
+}
+
+/* ==================================================================== events */
+const HANDLERS = {
+  gotab: a => show(a[0]),
+  devsheet: () => deviceSheet(),
+  pickdev: a => switchDevice(a[0]),
+  renamedev: a => devRenameSheet(a[0]),
+  deldev: a => {
+    const d = devOf(a[0]); if (!d || d.kind === "demo") return;
+    const name = d.name || d.id;
+    ask(t("dev_remove"), t("dev_remove_q", { name }), () => {
+      closeSheet();                      // before send(): an expired PIN draws its keypad in here
+      send("stime/device/del", { id: d.id }, () => t("dev_removed", { name }));
+    }, t("dev_remove"));
+  },
+  // Clear today and take every pass back: the one press that undoes an accidental all-day open.
+  recover: () => ask(t("reset_today"), t("reset_today_q"), () => send("stime/recover", {}, t("reset_today_ok")), t("reset_today_yes")),
+  apprefresh: () => send("stime/apps/refresh", { id: (M.device || {}).id }, t("apps_refresh_sent")),
+  fil: a => { S.filter = a[0]; if (S.tab !== "apps") show("apps"); else render(); },
+  seltog: () => { S.selecting = !S.selecting; S.picked.clear(); CTX.afterNew = null; render(); },
+  pick: a => {
+    const on = !S.picked.has(a[0]);
+    on ? S.picked.add(a[0]) : S.picked.delete(a[0]);
+    const row = document.querySelector(`[data-act="pick:${a[0]}"]`);
+    if (row) { row.classList.toggle("on", on); row.querySelector(".box")?.classList.toggle("on", on); }
+    renderBar();
+  },
+  addg: a => send("stime/extend", { scope: "global", minutes: a[0] }, () => t("added_minutes", { at: clockOf(now() + a[0] * MIN) })),
+  addgrp: a => send("stime/extend", { scope: "group", id: CTX.gid, minutes: a[0] }, () => t("added_minutes", { at: clockOf(now() + a[0] * MIN) })),
+  rev: a => send("stime/extend/cancel", { id: a[0] }, t("revoked")),
+  grp: a => groupSheet(a[0]),
+  approw: a => appSheet(a[0]),
+  newgrp: a => newGroupSheet(a[0] ? a[0].split(",") : null),
+  preset: a => createGroup(t("cat_" + a[0]), COLORS[M.groups.length % COLORS.length], APPS.filter(x => x.cat === a[0]).map(x => x.pkg)),
+  glimit: () => limitSheet(t("group_daily"), grp(CTX.gid).dailyMinutes, v => updGroup({ dailyMinutes: v === "null" ? null : +v })),
+  gaddapp: () => { CTX.afterNew = grp(CTX.gid).id; S.selecting = true; S.picked = new Set(); S.tab = "apps"; closeSheet(); render(); },
+  jgrp: () => joinSheet([CTX.pkg], gid => {
+    // Close first, then write: once the 10-minute PIN session has run out, send() puts the keypad
+    // in this same sheet, and a closeSheet() after it wiped the keypad the moment it appeared —
+    // on the phone that looked like the page blinking white and dropping back to the browser.
+    const pkg = CTX.pkg;
+    closeSheet();
+    send("stime/group/members", { id: gid, pkgs: pkg, mode: "move" }, () => t("joined_ok", { n: 1, name: gname(grp(gid)) }));
+  }),
+  into: a => { if (CTX.afterJoin) CTX.afterJoin(a[0]); },
+  owngrp: () => { const id = gidOf(CTX.pkg); closeSheet(); setTimeout(() => groupSheet(id), 220); },
+  leavegrp: () => {
+    const from = gidOf(CTX.pkg), pkg = CTX.pkg;
+    closeSheet();                       // same order as jgrp: an expired PIN must keep its keypad
+    send("stime/app/leave", { from, pkg }, t("left_group"));
+  },
+  rngrp: () => renameSheet(grp(CTX.gid)),
+  delgrp: () => {
+    const g = grp(CTX.gid); if (!g) return;
+    const n = gname(g);
+    ask(t("delete_group"), t("delete_group_q", { name: n }), () => {
+      // Close the group sheet first: if the PIN session has run out, send() opens the PIN sheet in
+      // that same container and a closeSheet() after it would wipe the keyboard and the delete
+      // with it — the button would look dead for a second reason.
+      closeSheet();
+      send("stime/group/del", { id: g.id }, () => t("deleted_group", { name: n }));
+    }, t("delete"));
+  },
+  cap: a => limitSheet(t("set_" + a[0]), M.global.dailyMinutes[a[0]], v => send("stime/daily", { scope: a[0], minutes: v }, () => t("updated_group", { name: t("set_" + a[0]) }))),
+  dsave: () => { const f = CTX.pickFn, d = CTX.dur; closeSheet(); if (f) f(d.on ? "null" : d.h * 60 + d.m); },
+  ov: a => send("stime/overflow", { action: a[0] }, () => t("updated_group", { name: t("set_when_over") })),
+  bedday: a => {
+    const d = +a[0], w = M.global.bedtime.weekdays.slice();
+    w.includes(d) ? w.splice(w.indexOf(d), 1) : w.push(d);
+    if (!send("stime/bedtime/days", { weekdays: w.sort((x, y) => x - y).join(",") })) renderSettings();
+  },
+  eb: a => { const k = a[1], now = M.global.eyeBreak[k]; send("stime/break", { patch: JSON.stringify({ [k]: Math.max(5, now + +a[0]) }) }); },
+  ep: a => { const k = a[1], now = M.global.extendPolicy[k]; send("stime/extendpolicy", { patch: JSON.stringify({ [k]: Math.max(k === "max" ? 0 : 5, now + +a[0]) }) }); },
+  pinbtn: () => openPin(M.pin.set ? "change" : "set"),
+  reset: () => ask(t("reset_data"), t("reset_q"), () => send("stime/reset", {}, t("reset_done")), t("clear_btn")),
+  lang: a => { LANG = a[0]; localStorage.setItem("aerial-lang", LANG); closeSheet(); render(); },
+  /* Version bank. Every write goes through relWrite(): same PIN replay as everything else. */
+  // 启用要先把后果说清楚：推给谁、多久看到、还得人在电视上点安装。
+  renable: a => {
+    const r = relOf(a[0]); if (!r) return;
+    const who = r.devices && r.devices.length ? t("ver_canary_n", { n: r.devices.length }) : t("ver_all");
+    ask(t("ver_enable"), t("ver_enable_q", { v: verLabel(r), who: who }), () =>
+      relWrite("stime/release/enable", { id: r.id }, () => t("ver_enabled_ok", { v: verLabel(r) })), t("ver_enable"));
+  },
+  rdisable: a => { const r = relOf(a[0]); if (r) relWrite("stime/release/disable", { id: r.id }, () => t("ver_disabled_ok", { v: verLabel(r) })); },
+  rtarget: a => targetSheet(a[0]),
+  rsave: a => {
+    const ids = CTX.relPick ? [...CTX.relPick] : [];
+    closeSheet();
+    relWrite("stime/release/target", { id: a[0], devices: ids.join(",") },
+      () => ids.length ? t("ver_target_ok", { n: ids.length }) : t("ver_target_ok_all"));
+  },
+  rall: a => { closeSheet(); relWrite("stime/release/target", { id: a[0], devices: "" }, () => t("ver_target_ok_all")); },
+  // Deleting is metadata only: a TV already running the build is never downgraded, so say that
+  // before asking, and pass the server's fileNote through when it also cannot delete the file.
+  rdel: a => {
+    const r = relOf(a[0]); if (!r) return;
+    ask(t("delete_release"), t("ver_del_q", { v: verLabel(r) }), () =>
+      relWrite("stime/release/del", { id: r.id }, null,
+        st => toast(st.fileNote || t("ver_deleted_ok", { v: verLabel(r) }))), t("delete"));
+  },
+  rpin: () => openPin("unlock", () => { R.attempted = false; loadReleases(); }),
+  rretry: () => { R.attempted = false; loadReleases(); },
+  rreload: () => loadReleases(),
+};
+function updGroup(patch) {
+  const g = grp(CTX.gid); if (!g) return;
+  const id = g.id, name = gname(g);
+  const apply = () => {
+    const fin = () => { render(); groupSheet(id); toast(t("updated_group", { name })); };
+    const r = api("stime/group/update", { id, patch: JSON.stringify(patch) });
+    if (isAsync(r)) return r.then(fin, () => {});
+    fin();
+  };
+  if (unlocked()) apply(); else openPin("unlock", apply);
+}
+document.body.addEventListener("click", e => {
+  const h = e.target.closest("[data-on]");
+  if (h) return ONCHANGE[h.dataset.on](h);
+  const el = e.target.closest("[data-act]"); if (!el) return;
+  const [fn, ...args] = el.dataset.act.split(":");
+  if (HANDLERS[fn]) { e.preventDefault(); HANDLERS[fn](args, el); }
+}, true);
+document.getElementById("tabs").addEventListener("click", e => { const b = e.target.closest("[data-tab]"); if (b) show(b.dataset.tab); });
+document.getElementById("q").addEventListener("input", e => { S.q = e.target.value; renderApps(); });
+document.getElementById("selbtn").onclick = () => { S.selecting = true; render(); };
+/* Switches: the change event carries the settled value. */
+const ONCHANGE = {
+  bedon: el => { if (!send("stime/bedtime", { on: el.checked ? "1" : "0" })) renderSettings(); },
+  bedfrom: el => { if (!send("stime/bedtime", { from: el.value })) renderSettings(); },
+  bedto: el => { if (!send("stime/bedtime", { to: el.value })) renderSettings(); },
+  gexempt: el => updGroup({ bedtimeExempt: el.checked }),
+  gext: el => updGroup({ extendAllowed: el.checked }),
+  gblock: el => updGroup({ blocked: el.checked }),
+  ebon: el => { if (!send("stime/break", { patch: JSON.stringify({ enabled: el.checked }) })) renderSettings(); },
+  epallow: el => { if (!send("stime/extendpolicy", { patch: JSON.stringify({ allowRequest: el.checked }) })) renderSettings(); },
+  dunlim: el => { if (CTX.dur && CTX.durSync) { CTX.dur.on = el.checked; CTX.durSync(); } },
+};
+document.body.addEventListener("change", e => {
+  const h = e.target.closest("[data-on]");
+  if (h && h.tagName === "INPUT" && h.type === "time") ONCHANGE[h.dataset.on](h);
+});
+function renderBar() {
+  const bar = document.getElementById("actionbar");
+  if (!S.selecting) { bar.className = "actionbar"; bar.hidden = true; return; }
+  if (bar.dataset.n === String(S.picked.size) && bar.dataset.t === String(CTX.afterNew)) return;
+  const n = S.picked.size, cross = [...S.picked].filter(p => gidOf(p)).length;
+  const target = CTX.afterNew;
+  bar.hidden = false;
+  bar.dataset.n = String(n); bar.dataset.t = String(target);
+  bar.className = "actionbar" + (n ? " on" : "");
+  bar.innerHTML = `<span class="n">${esc(t("selected_n", { n }))}${cross && !target ? `<small>${esc(t("selected_move", { n: cross }))}</small>` : ""}</span>
+    ${target ? `<button class="btn" data-bar="here" ${n ? "" : "disabled"}>${esc(t("group_add_app"))}</button>` : ""}
+    <button class="btn" data-bar="join" ${n ? "" : "disabled"}>${esc(t("join_group"))}</button>
+    <button class="btn ghost" data-bar="cancel">${esc(t("cancel"))}</button>`;
+  bar.onclick = e => {
+    const b = e.target.closest("[data-bar]"); if (!b) return;
+    const pkgs = [...S.picked];
+    if (b.dataset.bar === "cancel" || !pkgs.length) { S.selecting = false; S.picked.clear(); CTX.afterNew = null; render(); return; }
+    if (b.dataset.bar === "here") {
+      const toGroup = target;
+      const go = () => {
+        S.selecting = false; S.picked.clear(); CTX.afterNew = null;
+        closeSheet();                     // before send(): an expired PIN opens its sheet here
+        send("stime/group/members", { id: toGroup, pkgs: pkgs.join(","), mode: "move" }, () => t("joined_ok", { n: pkgs.length, name: gname(grp(toGroup)) }));
+        groupSheet(toGroup);              // reopened at once, so the close above still animates once
+      };
+      // Ask for the PIN up front: send() only replays itself after unlocking, so the rest of this
+      // flow (leaving selection, closing sheets, opening the group) would be skipped.
+      if (!unlocked()) return openPin("unlock", go);
+      go(); return;
+    }
+    joinSheet(pkgs, gid => {
+      S.selecting = false; S.picked.clear(); CTX.afterNew = null;
+      closeSheet();
+      send("stime/group/members", { id: gid, pkgs: pkgs.join(","), mode: "move" }, () => t("joined_ok", { n: pkgs.length, name: gname(grp(gid)) }));
+    });
+  };
+}
+
+/* ==================================================================== boot + live */
+const startTab = (location.hash || "").slice(1);
+const bootTab = TABS.includes(startTab) ? startTab : (localStorage.getItem("aerial-stime-tab") || "today");
+fetchState()
+  .then(st => {
+    hydrate(st);
+    // First open: there was no stored client, so the answer may be the server's fallback rather
+    // than defaultDeviceId. Ask once more, now that DEV is settled, before the first paint.
+    return st.device && st.device.id !== curId() ? fetchState().then(hydrate, () => null) : st;
+  }, seedDemoFromUrl)
+  .then(() => show(bootTab), () => show(bootTab));
+setInterval(refresh, 15000);
+setInterval(() => {
+  if (document.hidden) return;
+  if (!LIVE && M.current.pkg) M.byApp[M.current.pkg] = (M.byApp[M.current.pkg] || 0) + 1000;
+  const el = document.getElementById("curin");
+  if (el) el.textContent = fmtDur(now() - M.current.since);
+  if (S.tab !== "today" || !wrap.hidden) return;
+  const { used, cap, p, color } = todayFigures(), C = 2 * Math.PI * 52, ring = document.getElementById("gring");
+  if (ring) { ring.style.strokeDashoffset = (C * (1 - p)).toFixed(1); ring.style.stroke = color; }
+  const pct = document.getElementById("gpct");
+  if (pct) { pct.textContent = cap ? Math.round(p * 100) + "%" : "∞"; pct.style.color = color; }
+  const gd = document.getElementById("gused");
+  if (gd) gd.innerHTML = esc(fmtDur(used)) + ` <small>${esc(t("used_suffix"))}</small>`;
+  const st = document.getElementById("gstate");
+  if (st) st.innerHTML = todayFigures().stateHtml;
+  document.querySelectorAll("#grouplist .bar i").forEach((b, i) => {
+    const g = M.groups[i]; if (!g) return;
+    const u = gUsed(g), pr = g.dailyMinutes == null ? pctOf(u, 3 * HOUR) : pctOf(u, g.dailyMinutes * MIN);
+    b.style.width = (pr * 100).toFixed(1) + "%";
+    b.style.background = g.blocked || (g.dailyMinutes != null && pr >= 1) ? "var(--danger)" : g.dailyMinutes != null && pr >= .85 ? "var(--warn)" : g.color;
+  });
+}, 1000);
+setInterval(() => { if (!document.hidden && !M.pin.locked && grantLeft() <= 0) { M.pin.locked = true; render(); toast(t("locked_ok")); } }, 15000);
+</script>
+</body>
+</html>
