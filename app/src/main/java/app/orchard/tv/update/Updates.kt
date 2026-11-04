@@ -453,8 +453,10 @@ object Updates {
     }
 
     /** So the household backend can show which TV is on what, and which update never landed. */
-    private fun report(stage: String, from: Long, to: Long, name: String?, reason: String?) =
+    private fun report(stage: String, from: Long, to: Long, name: String?, reason: String?) {
+        if (!started) return
         ScreenTime.reportUpdate(stage, from, to, name, reason)
+    }
     /**
      * The release notes for [available], from the copy kept with the version it was read for, else
      * from the website (once per new version; the update page asks again while it has none). The
@@ -603,8 +605,9 @@ object Updates {
             val to = apk?.let { versionCode(it) } ?: o?.versionCode ?: 0L
             val name = apk?.versionName?.substringBefore('-') ?: o?.versionName ?: available
             // The last request this process may get to make: the installer replaces it on success.
-            // Whether the version really moved is reported next time Aerial starts (init).
-            prefs.edit { putLong(KEY_HANDED_FROM, BuildConfig.VERSION_CODE.toLong()) }
+            // Whether the version really moved is reported next time Aerial starts (init). Where
+            // [init] never ran (a bare unit test), there is no prefs to remember it in.
+            if (started) prefs.edit { putLong(KEY_HANDED_FROM, BuildConfig.VERSION_CODE.toLong()) }
             val opened = if (Build.VERSION.SDK_INT >= 28) installBySession(app, file) else openInstaller(context, app, file)
             if (opened) {
                 report("handed", BuildConfig.VERSION_CODE.toLong(), to, name, null)
