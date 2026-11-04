@@ -12,7 +12,13 @@
     --sep: rgba(60,60,67,.18); --tint: #007aff; --fill: rgba(118,118,128,.12); --danger: #ff3b30;
     --bar: rgba(249,249,249,.82); --bar-line: rgba(0,0,0,.14); --scrim: rgba(0,0,0,.32); --sheet: #f2f2f7;
     --ease-out: cubic-bezier(.23,1,.32,1); --ease-drawer: cubic-bezier(.32,.72,0,1);
-    --tabbar: calc(50px + env(safe-area-inset-bottom));
+    --tabbar: 50px;
+  }
+  /* env() needs Chromium 69; an older kernel drops the whole declaration and takes every height
+     and padding that reads --tabbar down with it. Keep the plain value as the floor and add the
+     safe area back only under a kernel that passes this test. */
+  @supports (padding-bottom: env(safe-area-inset-bottom)) {
+    :root { --tabbar: calc(50px + env(safe-area-inset-bottom)); }
   }
   @media (prefers-color-scheme: dark) {
     :root {
@@ -31,7 +37,7 @@
   /* A display rule would otherwise show what is hidden. */
   [hidden] { display: none !important; }
 
-  main { max-width: 720px; margin: 0 auto; padding: env(safe-area-inset-top) 16px calc(var(--tabbar) + 32px); }
+  main { max-width: 720px; margin: 0 auto; padding: 14px 16px calc(var(--tabbar) + 32px); }
   header { padding: 28px 4px 4px; }
   header h1 { font-size: 34px; font-weight: 700; letter-spacing: -.02em; margin: 0; }
   header p { margin: 2px 0 0; color: var(--secondary); font-size: 15px; }
@@ -58,12 +64,12 @@
   .item.tint { color: var(--tint); }
   .item.danger { color: var(--danger); }
   .item.center { justify-content: center; font-weight: 500; }
-  .item .thumb { width: 64px; aspect-ratio: 16 / 9; border-radius: 6px; object-fit: cover; background: var(--fill); flex-shrink: 0; }
+  .item .thumb { width: 64px; height: 36px; aspect-ratio: 16 / 9; border-radius: 6px; object-fit: cover; background: var(--fill); flex-shrink: 0; }
   .item:has(.thumb) + .item::before { left: 92px; }
   .tick { color: var(--tint); flex-shrink: 0; opacity: 0; transform: scale(.8); transition: opacity .15s ease, transform .2s var(--ease-out); }
   [aria-checked="true"] .tick { opacity: 1; transform: none; }
   .item[disabled] { opacity: .5; }
-  .item select { position: absolute; inset: 0; opacity: 0; width: 100%; font-size: 16px; }
+  .item select { position: absolute; top: 0; right: 0; bottom: 0; left: 0; opacity: 0; width: 100%; font-size: 16px; }
   .switch {
     appearance: none; -webkit-appearance: none; position: relative; flex-shrink: 0; width: 51px; height: 31px; margin: 0;
     border-radius: 16px; background: var(--fill); cursor: pointer; transition: background-color .2s ease;
@@ -77,8 +83,9 @@
   .switch:disabled { opacity: .5; }
 
   /* Wallpaper cards. */
-  .hero { position: relative; margin-top: 14px; border-radius: 16px; overflow: hidden; background: var(--fill); aspect-ratio: 16 / 9; }
-  .hero img { display: block; width: 100%; height: 100%; object-fit: cover; }
+  .hero { position: relative; margin-top: 14px; border-radius: 16px; overflow: hidden; background: var(--fill); height: 0; padding-top: 56.25%; }
+  @supports (aspect-ratio: 16 / 9) { .hero { height: auto; padding-top: 0; aspect-ratio: 16 / 9; } }
+  .hero img { display: block; position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; }
   .hero .cap {
     position: absolute; left: 0; right: 0; bottom: 0; padding: 32px 16px 12px; color: #fff;
     background: linear-gradient(to top, rgba(0,0,0,.6), rgba(0,0,0,0));
@@ -86,13 +93,13 @@
   .hero .cap small { display: block; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; opacity: .8; }
   .hero .cap b { font-size: 20px; font-weight: 600; }
   /* Cells start at the top: a button centres its content, so a tile without a caption sat lower than its neighbour. */
-  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 14px 12px; align-items: start; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); grid-gap: 14px 12px; gap: 14px 12px; align-items: start; }
   .wp { position: relative; display: block; border: 0; padding: 0; background: none; text-align: left; min-width: 0; }
   .wp .pic {
-    position: relative; border-radius: 12px; overflow: hidden; background: var(--fill); aspect-ratio: 16 / 9;
+    position: relative; border-radius: 12px; overflow: hidden; background: var(--fill); height: 0; padding-top: 56.25%;
     transition: transform .16s var(--ease-out), box-shadow .2s ease;
   }
-  .wp .pic img { display: block; width: 100%; height: 100%; object-fit: cover; }
+  .wp .pic img { display: block; position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; }
   .wp:active .pic { transform: scale(.97); }
   .wp[aria-selected="true"] .pic { box-shadow: 0 0 0 2.5px var(--bg), 0 0 0 5px var(--tint); }
   .wp .t { font-size: 14px; font-weight: 500; margin: 7px 2px 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -159,12 +166,12 @@
 
   /* Tab bar. */
   nav {
-    position: fixed; left: 0; right: 0; bottom: 0; z-index: 10; height: var(--tabbar); padding-bottom: env(safe-area-inset-bottom);
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 10; height: var(--tabbar); min-height: var(--tabbar); padding-bottom: env(safe-area-inset-bottom);
     display: flex; justify-content: center; background: var(--bar); box-shadow: 0 -.5px 0 var(--bar-line);
     -webkit-backdrop-filter: saturate(180%) blur(20px); backdrop-filter: saturate(180%) blur(20px);
   }
   nav button {
-    flex: 1; max-width: 160px; border: 0; background: none; padding: 6px 0 0; color: var(--secondary);
+    flex: 1; min-width: 0; max-width: 160px; border: 0; background: none; padding: 6px 4px 0; color: var(--secondary);
     display: flex; flex-direction: column; align-items: center; gap: 2px; font-size: 10.5px; font-weight: 500; cursor: pointer;
   }
   nav button svg { transition: transform .16s var(--ease-out); }
@@ -178,7 +185,7 @@
   .arow .act { flex-shrink: 0; font-weight: 600; }
   /* Home as on the TV: as many tiles a row (--cols, Personalize on the TV), the first on a shelf. */
   .agrid {
-    position: relative; display: grid; grid-template-columns: repeat(var(--cols, 5), minmax(0, 1fr)); gap: 14px 7px;
+    position: relative; display: grid; grid-template-columns: repeat(var(--cols, 5), minmax(0, 1fr)); grid-gap: 14px 7px; gap: 14px 7px;
     padding: 12px 10px 14px; background: var(--card); border-radius: 14px;
   }
   .agrid .shelf { position: absolute; left: 4px; right: 4px; top: 4px; border-radius: 11px; background: var(--fill); pointer-events: none; }
@@ -187,36 +194,42 @@
     touch-action: pan-y; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none;
   }
   .atile .tpic {
-    width: 100%; aspect-ratio: 16 / 9; border-radius: 6px; overflow: hidden; background: var(--fill);
+    position: relative; width: 100%; height: 0; padding-top: 56.25%; border-radius: 6px; overflow: hidden; background: var(--fill);
     box-shadow: 0 1px 2px rgba(0,0,0,.14); transition: transform .16s var(--ease-out), box-shadow .2s ease;
   }
-  .atile .tpic img { display: block; width: 100%; height: 100%; object-fit: cover; pointer-events: none; -webkit-user-drag: none; }
+  /* The percentage padding carries the 16:9 box on kernels without aspect-ratio; it is a share of
+     the containing block's width, which for a full-width tile is the tile itself. */
+  @supports (aspect-ratio: 16 / 9) {
+    .atile .tpic { height: auto; padding-top: 0; aspect-ratio: 16 / 9; }
+  }
+  .atile .tpic img { display: block; position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; pointer-events: none; -webkit-user-drag: none; }
   .atile .n { width: 100%; font-size: 10.5px; line-height: 1.25; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .atile:active .tpic { transform: scale(.95); }
   .agrid.sorting .atile:not(.lift) { transition: transform .26s var(--ease-out); }
   .atile.lift { z-index: 3; cursor: grabbing; }
   .atile.lift .tpic { transform: scale(1.14); box-shadow: 0 14px 30px rgba(0,0,0,.32), 0 3px 8px rgba(0,0,0,.18); }
   .atile.lift .n { opacity: 0; }
-  .icon-sq { width: 30px; height: 30px; border-radius: 7px; background: var(--tint); color: #fff; display: grid; place-items: center; flex-shrink: 0; }
-  .sheet-wrap { position: fixed; inset: 0; z-index: 20; }
-  .scrim { position: absolute; inset: 0; background: var(--scrim); opacity: 0; transition: opacity .2s ease; }
+  .icon-sq { width: 30px; height: 30px; border-radius: 7px; background: var(--tint); color: #fff; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+  .sheet-wrap { position: fixed; top: 0; right: 0; bottom: 0; left: 0; z-index: 20; }
+  .scrim { position: absolute; top: 0; right: 0; bottom: 0; left: 0; background: var(--scrim); opacity: 0; transition: opacity .2s ease; }
   /* Into a folder from the right; back out of it from the left, the way it went. */
   .view.push { animation: push .26s var(--ease-out); }
   .view.pop { animation: pop .26s var(--ease-out); }
   @keyframes push { from { opacity: 0; transform: translateX(24px); } to { opacity: 1; transform: none; } }
   @keyframes pop { from { opacity: 0; transform: translateX(-24px); } to { opacity: 1; transform: none; } }
   .sheet {
-    max-height: calc(100% - env(safe-area-inset-top) - 24px); overflow-y: auto; overscroll-behavior: contain;
+    max-height: calc(100% - 24px); overflow-y: auto; overscroll-behavior: contain;
     position: absolute; left: 0; right: 0; bottom: 0; max-width: 520px; margin: 0 auto; background: var(--sheet);
-    border-radius: 14px 14px 0 0; padding: 8px 16px calc(16px + env(safe-area-inset-bottom));
+    border-radius: 14px 14px 0 0; padding: 8px 16px 16px;
     transform: translateY(100%); transition: transform .2s var(--ease-out);
   }
   .sheet-wrap.open .scrim { opacity: 1; transition-duration: .3s; }
   .sheet-wrap.open .sheet { transform: none; transition: transform .38s var(--ease-drawer); }
   .grab { width: 36px; height: 5px; border-radius: 3px; background: var(--tertiary); margin: 0 auto 14px; }
-  .sheet .pic { border-radius: 12px; overflow: hidden; aspect-ratio: 16 / 9; background: var(--fill); width: 62%; margin: 0 auto; }
-  .sheet .pic img { display: block; width: 100%; height: 100%; object-fit: cover; }
-  .item .ithumb { width: 64px; aspect-ratio: 16 / 9; border-radius: 6px; object-fit: cover; margin-right: 12px; flex: none; background: var(--fill); }
+  .sheet .pic { border-radius: 12px; overflow: hidden; background: var(--fill); width: 62%; margin: 0 auto; position: relative; height: 0; padding-top: 34.875%; }
+  @supports (aspect-ratio: 16 / 9) { .sheet .pic { height: auto; padding-top: 0; aspect-ratio: 16 / 9; } }
+  .sheet .pic img { display: block; position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; }
+  .item .ithumb { width: 64px; height: 36px; aspect-ratio: 16 / 9; border-radius: 6px; object-fit: cover; margin-right: 12px; flex: none; background: var(--fill); }
   .sheet h3 { text-align: center; font-size: 17px; font-weight: 600; margin: 12px 0 2px; }
   .sheet .meta { text-align: center; font-size: 13px; color: var(--secondary); margin: 0 0 16px; }
   .sheet .list { background: var(--card); }
@@ -232,7 +245,7 @@
   .toast.on { opacity: 1; transform: translate(-50%, 0); }
   /* Dropping files anywhere on the page: photos become wallpapers, videos go to the screensaver. */
   .drop {
-    position: fixed; inset: 0; z-index: 40; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px;
+    position: fixed; top: 0; right: 0; bottom: 0; left: 0; z-index: 40; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px;
     background: var(--scrim); color: #fff; pointer-events: none; opacity: 0; transition: opacity .15s ease;
   }
   .drop.on { opacity: 1; }
@@ -240,6 +253,38 @@
   .drop span { font-size: 15px; opacity: .85; padding: 0 40px 28px; border: 2px dashed rgba(255,255,255,.7); border-top: 0; border-radius: 0 0 18px 18px; }
 
   /* A computer's browser: the tabs down the side, a wider page, dialogs in the middle. */
+  /* The safe-area overrides come last on purpose: the same-weight padding above them would otherwise
+     win, and a kernel that fails this test keeps that plain padding anyway. */
+  @supports (padding-bottom: env(safe-area-inset-bottom)) {
+    main { padding-top: calc(14px + env(safe-area-inset-top)); }
+    .sheet { max-height: calc(100% - env(safe-area-inset-top) - 24px); padding-bottom: calc(16px + env(safe-area-inset-bottom)); }
+  }
+
+  /* Flex gap needs Chromium 84 / Safari 14.1. An older kernel keeps the row but throws the spacing
+     away, so rebuild it with margins only where gap is genuinely missing. */
+  @supports not (gap: 4px) {
+    .item > * + * { margin-left: 12px; }
+    .row > * + * { margin-left: 10px; }
+    .wx > * + * { margin-left: 10px; }
+    .field > * + * { margin-left: 8px; }
+    .btn > * + * { margin-left: 6px; }
+    .back > * + * { margin-left: 3px; }
+    .atile > * + * { margin-top: 5px; }
+    .drop > * + * { margin-top: 6px; }
+  }
+
+  /* Phone: the scarce axis is height, so the heading and the rows shrink on a narrow or short
+     window. Nothing here applies to the desktop layout at 900px and above. */
+  @media (max-width: 680px), (max-height: 700px) and (max-width: 899px) {
+    header { padding: 14px 4px 2px; }
+    header h1 { font-size: 26px; }
+    h2 { margin: 20px 16px 6px; }
+    h2.big { margin: 20px 4px 8px; font-size: 18px; }
+    .item { min-height: 44px; padding: 9px 16px; }
+    .arow { min-height: 54px; }
+    section > .list:first-child, section > .hero:first-child { margin-top: 12px; }
+  }
+
   @media (hover: hover) and (pointer: fine) {
     button.item:hover, label.item:hover { background: var(--fill); }
     .wp:hover .pic { transform: scale(1.02); }

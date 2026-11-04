@@ -118,6 +118,7 @@ import app.orchard.tv.ui.theme.Palette
 import app.orchard.tv.ui.theme.Type
 import app.orchard.tv.update.ReleaseNotes
 import app.orchard.tv.update.SelfCompile
+import app.orchard.tv.screentime.ScreenTime
 import app.orchard.tv.update.Updates
 import app.orchard.tv.wallpaper.PhoneServer
 import java.time.LocalDateTime
@@ -460,9 +461,13 @@ private fun UpdatePage(vm: HomeViewModel, takeFocus: Boolean) {
             val state = Updates.install
             MenuRow(
                 Glyph.Download,
-                when (state) {
-                    is Updates.Install.Downloading -> stringResource(R.string.cc_update_downloading, (state.fraction * 100).toInt())
-                    Updates.Install.Waiting -> stringResource(R.string.cc_update_waiting)
+                when {
+                    state is Updates.Install.Downloading -> stringResource(R.string.cc_update_downloading, (state.fraction * 100).toInt())
+                    // The backend's APK is already on the TV, fetched when the rules came in: the
+                    // wait is over before the button is ever pressed.
+                    Updates.ready && Updates.available != null ->
+                        stringResource(R.string.cc_update_install_now, Updates.available ?: Updates.current)
+                    state is Updates.Install.Waiting -> stringResource(R.string.cc_update_waiting)
                     else -> stringResource(R.string.cc_update_install)
                 },
                 focusRequester = first,
@@ -478,15 +483,29 @@ private fun UpdatePage(vm: HomeViewModel, takeFocus: Boolean) {
                 Updates.Install.NeedsStoragePermission -> stringResource(R.string.cc_update_storage_permission)
                 is Updates.Install.Failed -> stringResource(
                     when (state.reason) {
-                        Updates.Failure.Download -> R.string.cc_update_failed_download
+                        // Over the LAN from the household NAS, not off the website: a different
+                        // thing to go and look at when it fails.
+                        Updates.Failure.Download ->
+                            if (ScreenTime.enabled) R.string.cc_update_failed_download_manager
+                            else R.string.cc_update_failed_download
                         Updates.Failure.Blocked -> R.string.cc_update_failed_blocked
                         Updates.Failure.NotOfficial -> R.string.cc_update_failed_signature
                         Updates.Failure.NotNewer -> R.string.cc_update_failed_older
                     },
                 )
-                else -> stringResource(R.string.cc_update_current, Updates.current)
+                else -> Updates.available?.takeIf { Updates.ready }?.let { stringResource(R.string.cc_update_ready, it) }
+                    ?: stringResource(R.string.cc_update_current, Updates.current)
             }
             BasicText(status, style = Type.Caption)
+            // What the household build changes, typed on the backend page when it was published.
+            Updates.offer?.notes?.takeIf { it.isNotBlank() }?.let {
+                Spacer(Modifier.height(6.dp))
+                BasicText(it, style = Type.Caption.copy(color = Palette.SecondaryLabel))
+            }
+            Updates.upstream?.takeIf { ScreenTime.enabled }?.let {
+                Spacer(Modifier.height(6.dp))
+                BasicText(stringResource(R.string.cc_update_upstream_notice, it), style = Type.Caption.copy(color = Palette.TertiaryLabel))
+            }
         }
         // Read when the page opens too: the check that found the version may have missed them.
         LaunchedEffect(Unit) { if (Updates.notes.isEmpty()) Updates.loadNotes() }

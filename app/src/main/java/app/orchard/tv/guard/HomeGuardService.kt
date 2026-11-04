@@ -34,6 +34,8 @@ import androidx.core.content.ContextCompat
 import androidx.core.content.getSystemService
 import app.orchard.tv.MainActivity
 import app.orchard.tv.dream.AerialDream
+import app.orchard.tv.screentime.ScreenTime
+import app.orchard.tv.screentime.ScreenTimeOverlay
 import app.orchard.tv.settings.AerialSettings
 import app.orchard.tv.system.BootOpen
 import app.orchard.tv.system.CecSwitch
@@ -517,6 +519,7 @@ class HomeGuardService : AccessibilityService() {
         // activities are found: PatchWall's home screen was cached as missing while locked, so
         // FIRMWARE_HOMES_WITHOUT_FILTER lost it until Aerial restarted (MiTV-MOOQ0, Android 11).
         activityCache.clear()
+        appCache.clear()
         refreshStockHomes()
         KidsWatch.start(this@HomeGuardService)
         checkMouseWithFilter(this@HomeGuardService)
@@ -862,6 +865,11 @@ class HomeGuardService : AccessibilityService() {
             handler.postDelayed(endBootStockHold, hold)
             DiagLog.i("guard: bound at boot; leaving the stock launcher on screen first (device profile)")
         }
+        // The guard is bound before Aerial's own window may ever start (a boot straight into an
+        // app), and screen time has to count from that moment on: it is what the family's limits
+        // and the countdown pill read. init() is idempotent.
+        ScreenTime.init(this)
+        ScreenTimeOverlay.attach(this)
         // Register before querying homes or checking the state so an unlock cannot be missed.
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
             registerReceiver(userUnlocked, IntentFilter(Intent.ACTION_USER_UNLOCKED))
@@ -1232,11 +1240,13 @@ class HomeGuardService : AccessibilityService() {
             runCatching { getSystemService<TvInputManager>()?.unregisterCallback(cecInputCallback) }
         }
         handler.removeCallbacksAndMessages(null)
+        ScreenTimeOverlay.detach()
         if (instance === this) instance = null
         super.onDestroy()
     }
 
     override fun onUnbind(intent: Intent?): Boolean {
+        ScreenTimeOverlay.detach()
         if (instance === this) instance = null
         return super.onUnbind(intent)
     }
@@ -1781,10 +1791,22 @@ class HomeGuardService : AccessibilityService() {
         val before = lastWindow?.first
         if (isActivity(pkg, cls)) {
             lastWindow = pkg to cls
+            // The same event stream the guard uses to defend Home: screen time rides along instead
+            // of asking for GET_USAGE_STATS, which no firmware here lets the viewer grant. Apps
+            // invisible to window changes on a given ROM (see foregroundCheck) are not measured by
+            // this path yet.
+            ScreenTime.onForeground(pkg)
             if (!CecHome.active(this, pkg)) {
                 lastCecHomeUp = Long.MIN_VALUE / 2
                 handler.removeCallbacks(cecHomeHold)
             }
+        } else if (pkg != packageName && pkg !in stockHomes && isApp(pkg)) {
+            // Bringing an app's task back to the front sends window changes whose className is a
+            // window or dialog, none of which isActivity takes for an app (issue #475, 云视听极光
+            // on MiTV-MFTR0, Android 14; the same on Sony KD-65X9500H with NewTV极光's countdown
+            // pill, 2026-10-31). Screen time still follows the package: it decides on the app, not
+            // on one of its windows. Home defence keeps needing a real activity for lastWindow.
+            ScreenTime.onForeground(pkg)
         }
         if (!GuardSetup.isUserUnlocked(this)) return
         // Kids and Elders mode: an app not chosen for it (or any, once locked) goes straight back
@@ -1939,8 +1961,14 @@ class HomeGuardService : AccessibilityService() {
     }
 
     /** True for packages with a launcher entry, i.e. apps rather than system overlays and dialogs. */
-    private fun isApp(pkg: String): Boolean =
-        packageManager.getLeanbackLaunchIntentForPackage(pkg) != null || packageManager.getLaunchIntentForPackage(pkg) != null
+    private fun isApp(pkg: String): Boolean = appCache.getOrPut(pkg) {
+        runCatching {
+            packageManager.getLeanbackLaunchIntentForPackage(pkg) != null ||
+                packageManager.getLaunchIntentForPackage(pkg) != null
+        }.getOrDefault(false)
+    }
+
+    private val appCache = HashMap<String, Boolean>()
 
     /** Settings' FallbackHome (one of fallbackHomes, named so), not the setup wizard's; see onAccessibilityEvent. */
     private fun isFallbackHomeScreen(pkg: String, cls: String): Boolean =
@@ -1961,7 +1989,10 @@ class HomeGuardService : AccessibilityService() {
      * (Xiaomi MiTV-MFTR0, OS3.0.101, issue #901). One update sends several broadcasts, so they
      * are folded into one read.
      */
-    private val refreshHomesAfterPackageChange = Runnable { refreshStockHomes() }
+    private val refreshHomesAfterPackageChange = Runnable {
+        appCache.clear()
+        refreshStockHomes()
+    }
 
     private val packageChanges = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {

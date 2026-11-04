@@ -74,6 +74,8 @@ import app.orchard.tv.apps.SourceLooks
 import app.orchard.tv.HomeViewModel
 import app.orchard.tv.Overlay
 import app.orchard.tv.R
+import app.orchard.tv.screentime.ScreenTime
+import app.orchard.tv.screentime.ScreenTimeGate
 import app.orchard.tv.settings.AerialSettings
 import app.orchard.tv.settings.Restricted
 import app.orchard.tv.guard.KidsWatch
@@ -1134,6 +1136,26 @@ fun HomeScreen(
             onDone = { pin?.onDone?.invoke() },
             onCancel = { vm.overlay = Overlay.None },
         )
+
+        // The screen-time gate: what the child sees instead of the app, and the one way on — the
+        // parent's PIN, spent on the amount picked on the card (ScreenTime.dayPass). Verify, never
+        // Unlock, so letting a child watch longer does not also open the TV's settings for ten minutes.
+        val limit = overlay as? Overlay.TimeLimit
+        if (limit != null) {
+            ScreenTimeGate(
+                block = ScreenTime.Block(limit.pkg, limit.groupId, limit.reason),
+                onAskForPin = { minutes ->
+                    vm.overlay = Overlay.Pin(PinMode.Verify) {
+                        ScreenTime.dayPass(limit.groupId, minutes) { _ ->
+                            // Close either way: a backend that cannot be reached must not leave the
+                            // gate stuck on screen with no way out (the buttons below still work).
+                            vm.overlay = Overlay.None
+                        }
+                    }
+                },
+                onDismiss = { vm.overlay = Overlay.None },
+            )
+        }
 
         NoticeBanner(vm.notice, Modifier.align(Alignment.TopCenter).padding(top = 24.dp), vm.noticeGlyph)
 

@@ -57,9 +57,12 @@ import app.orchard.tv.apps.AppNames
 import app.orchard.tv.apps.SourceLooks
 import app.orchard.tv.apps.StandIn
 import app.orchard.tv.apps.TileArtFactory
+import android.util.Log
 import app.orchard.tv.apps.rewritesLauncher
 import app.orchard.tv.guard.GuardSetup
+
 import app.orchard.tv.guard.HomeGuardService
+import app.orchard.tv.screentime.ScreenTime
 import app.orchard.tv.ui.home.FilmAfterInput
 import app.orchard.tv.ui.home.HomeScreen
 import app.orchard.tv.ui.home.AerialStart
@@ -217,6 +220,17 @@ class MainActivity : ComponentActivity() {
         }
         super.onCreate(savedInstanceState)
         if (savedInstanceState == null && reopenAsHome()) return
+
+        // Screen time runs whether or not the guard is bound: the launcher sees the apps people
+        // open from its own tiles, and the backend must keep receiving numbers.
+        ScreenTime.init(this)
+        // A limit reached while the child is watching (ScreenTime's tick loop, main thread): come
+        // back in front of whatever they were watching, carrying the reason in the intent so the
+        // gate shows the right sentence. The tick runs every 30 s, so "at once" means within that.
+        ScreenTime.onBlocked = { block ->
+            runCatching { startActivity(bringBackIntent(this).limit(block)) }
+                .onFailure { Log.w("AerialMain", "could not come back for a screen-time limit", it) }
+        }
         startReal(savedInstanceState)
     }
 
@@ -357,6 +371,8 @@ class MainActivity : ComponentActivity() {
         if (fresh && firstStartSinceBoot()) openBootSource("boot")
         if (intent.getBooleanExtra(EXTRA_WOKE, false)) openBootSource("brought back on wake")
         if (intent.getBooleanExtra(EXTRA_REOPEN_BOOT, false)) openBootSource("covered by the stock launcher", again = true)
+        // Brought back because an app ran out of time (ScreenTime headed the intent here).
+        limitFrom(intent)?.let { vm.overlay = it }
         if (fromLocked) {
             // This window already went through onStart and onResume while locked (both returned
             // early) and the system will not call them again unless it stops and starts the
@@ -919,6 +935,7 @@ class MainActivity : ComponentActivity() {
         DiagLog.i("onNewIntent ${intent.action}")
         if (intent.getBooleanExtra(EXTRA_WOKE, false)) openBootSource("brought back on wake")
         if (intent.getBooleanExtra(EXTRA_REOPEN_BOOT, false)) openBootSource("covered by the stock launcher", again = true)
+        limitFrom(intent)?.let { vm.overlay = it; return }
         if (intent.action == ACTION_PREVIEW_SCREENSAVER) {
             idleHandler.post { startScreensaver(asked = true) }
             return
@@ -1096,11 +1113,29 @@ class MainActivity : ComponentActivity() {
         runCatching { getSystemService<ConnectivityManager>()?.unregisterNetworkCallback(networkCallback) }
     }
 
+    /** The gate an intent asks for, when Home Guard brought Aerial back for a screen-time limit. */
+    private fun limitFrom(intent: Intent?): Overlay.TimeLimit? {
+        val pkg = intent?.getStringExtra(EXTRA_LIMIT_PKG)?.takeIf { it.isNotEmpty() } ?: return null
+        // A reason name that does not parse means an older build wrote it: showing the limit as a
+        // group limit is still better than dropping the gate and letting the app through.
+        val reason = runCatching { ScreenTime.Reason.valueOf(intent.getStringExtra(EXTRA_LIMIT_REASON) ?: "") }
+            .getOrDefault(ScreenTime.Reason.GroupLimit)
+        return Overlay.TimeLimit(pkg, reason, intent.getStringExtra(EXTRA_LIMIT_GROUP))
+    }
+
     /** Opens an app, growing it out of its tile. */
     private fun launch(app: AppEntry, bounds: Rect?) {
         // Kids and Elders mode shows only its own tiles, and none while locked; this is the last word.
         if (Restricted.active && (app.key !in Restricted.allowed || Restricted.lock != null)) {
             DiagLog.i("kids: ${app.key} not opened")
+            return
+        }
+        // A limit this app has already reached: do not open it at all, explain instead. Cheap when no
+        // rules have arrived yet (check() answers null), which is also why a TV that never reached the
+        // backend keeps opening everything.
+        ScreenTime.check(app.packageName)?.let { block ->
+            ScreenTime.reportBlock(block)                  // the parent sees it in the event log
+            vm.overlay = Overlay.TimeLimit(block.pkg, block.reason, block.groupId)
             return
         }
         // The TV's settings app behind the parental PIN as well, not only Control Center's button.
@@ -1410,6 +1445,17 @@ class MainActivity : ComponentActivity() {
                 (resolved == "android" &&
                     pm.queryIntentActivities(home, PackageManager.MATCH_DEFAULT_ONLY).any { it.activityInfo.packageName == context.packageName })
         }.getOrDefault(false)
+
+        /** Which app hit which limit, carried by [bringBackIntent] so the gate can name it. */
+        const val EXTRA_LIMIT_PKG = "app.orchard.tv.LIMIT_PKG"
+        const val EXTRA_LIMIT_REASON = "app.orchard.tv.LIMIT_REASON"
+        const val EXTRA_LIMIT_GROUP = "app.orchard.tv.LIMIT_GROUP"
+
+        private fun Intent.limit(block: ScreenTime.Block): Intent = this
+            .addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
+            .putExtra(EXTRA_LIMIT_PKG, block.pkg)
+            .putExtra(EXTRA_LIMIT_REASON, block.reason.name)
+            .putExtra(EXTRA_LIMIT_GROUP, block.groupId)
 
         const val SCREENSAVER_HOLD_MS = 4 * 60 * 60 * 1000L
 

@@ -12,6 +12,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.StatFs
 import android.os.SystemClock
 import android.provider.Settings
 import android.util.Log
@@ -23,15 +24,18 @@ import androidx.core.content.FileProvider
 import androidx.core.content.edit
 import app.orchard.tv.BuildConfig
 import app.orchard.tv.guard.GuardSetup
+import app.orchard.tv.screentime.ScreenTime
 import app.orchard.tv.system.DiagLog
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.json.JSONObject
 import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
+import java.security.MessageDigest
 import java.util.Locale
 
 /**
@@ -44,6 +48,27 @@ import java.util.Locale
  *
  * Home and network events check at most every three hours; opening Control Center shortens that
  * to ten minutes. Failed checks retry while Home is in front (#912).
+ *
+ * **This household's builds get their APKs from the tv-manager on the NAS, not from the website.**
+ * The TVs here run a copy signed with the household key (see docs/HANDOFF.md and
+ * local/tv-manager/INTEGRATION.md), and an official release is signed with the project key, so
+ * [sameSigner] would refuse it - correctly. The backend therefore has to be where the package
+ * comes from, and the website's number becomes something to mention ([upstream]) rather than
+ * something to download. A build without `local/tv-manager.properties` has no backend and behaves
+ * exactly as upstream does, website and GitHub included; that path stays whole so the fork keeps
+ * building for anyone else.
+ *
+ * Where there is a backend, the offer arrives with the screen-time rules (ScreenTime pulls them
+ * every half minute) and the APK is fetched straight away in the background ([ready]): Control
+ * Center then says "install" instead of making the viewer watch a download. Confirming the install
+ * stays with the person holding the remote - Android will not let an app replace itself without
+ * one, and the point of this project is that the owner decides.
+ *
+ * A release the backend marks `forced` goes one step further: once its APK is verified in the
+ * cache the TV takes it to the installer by itself ([autoInstall]), instead of waiting for the
+ * button. Android 12 and later firmware may then finish without asking (as since 1.72); older
+ * Android still shows its own confirmation page, and the viewer's refusal is honoured - one
+ * automatic try per offered build, no pestering until the bank moves on.
  */
 object Updates {
     private const val TAG = "AerialUpdates"
@@ -62,6 +87,26 @@ object Updates {
     private const val RESUME_TRIES = 3
     const val CONTROL_CENTER_MAX_AGE_MS = UpdateCheck.PANEL_MAX_AGE_MS
 
+    /**
+     * How long an APK that still matches what the backend offers may sit in the cache. [init] used
+     * to delete anything older than an hour, which threw away a prefetch the viewer had not got
+     * round to installing and made them download it again for nothing.
+     */
+    private const val KEEP_MS = 3 * 24 * 60 * 60 * 1000L
+
+    /** The APK plus what the installer needs. A full cache is noticed before the download, not at the end. */
+    private const val ROOM_FACTOR = 2
+
+    /** Given up on a prefetch after this many tries; the offer is retried when the backend changes it. */
+    private const val PREFETCH_GIVE_UP = 4
+
+    private const val KEY_OFFER = "offer"
+    private const val KEY_HANDED_FROM = "handed_from"
+    private const val KEY_PREFETCH_FAILS = "prefetch_fails"
+
+    /** The offered build a forced update already took to the installer; a refusal is not retried. */
+    private const val KEY_AUTO_TRIED = "auto_tried_code"
+
     /** This build's version, e.g. "1.17" (the guard build's "-guard" left off). */
     val current: String = BuildConfig.VERSION_NAME.substringBefore('-')
 
@@ -75,6 +120,22 @@ object Updates {
     var notes by mutableStateOf<List<ReleaseNotes>>(emptyList()); private set
     private var readingNotes = false
 
+    /**
+     * What the household backend offered with the last rules pull, or null when it has nothing for
+     * this TV (or there is no backend). Where this is set, it is the only thing this copy installs.
+     */
+    var offer by mutableStateOf<Offer?>(null); private set
+
+    /** [offer]'s APK is in the cache and checked: installing needs no download and no waiting. */
+    var ready by mutableStateOf(false); private set
+
+    /**
+     * A newer upstream release, read from the website. Information only where this household's
+     * backend is configured: an official APK is signed with the project key and [sameSigner] turns
+     * it down, which is why [available] does not follow it.
+     */
+    var upstream by mutableStateOf<String?>(null); private set
+
     /** Where an install started from Control Center has got to. */
     var install by mutableStateOf<Install>(Install.Idle); private set
 
@@ -83,28 +144,76 @@ object Updates {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var started = false
     private var checker: UpdateCheck? = null
+    private var prefetching = false
+
+    /**
+     * An offer that arrived before [init] - ScreenTime starts its heartbeat in `onCreate`, this
+     * object is set up later in the same start. Nothing may be dropped: it is the reason a TV
+     * updates at all.
+     */
+    private var pendingOffer: JSONObject? = null
+
+    /**
+     * What the backend says to move to: where the APK is, and how to prove the bytes that arrive are
+     * the ones it published over plain http on the LAN.
+     */
+    data class Offer(
+        val versionName: String,
+        val versionCode: Long,
+        val url: String,
+        val size: Long,
+        val sha256: String,
+        val notes: String,
+        val forced: Boolean,
+    )
 
     fun init(context: Context) {
         if (started) return
         started = true
         appContext = context.applicationContext
         prefs = context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        available = prefs.getString("latest", null)?.takeIf { newer(it, current) }
+        offer = readOffer()
+        val website = prefs.getString("latest", null)?.takeIf { newer(it, current) }
+        // With a backend the website's number is only a footnote; without one this is upstream.
+        available = offer?.versionName ?: website?.takeUnless { ScreenTime.enabled }
+        upstream = website
         checker = UpdateCheck(
             scope = scope,
             lastSuccess = { prefs.getLong("checked_at", 0) },
             read = { withContext(Dispatchers.IO) { read(VERSION_URL) } },
             save = { latest, checkedAt ->
                 prefs.edit { putString("latest", latest); putLong("checked_at", checkedAt) }
-                available = latest.takeIf { newer(it, current) }
+                upstream = latest.takeIf { newer(it, current) }
+                // Only a build with no backend of its own may install what the website publishes.
+                if (!ScreenTime.enabled) available = upstream
                 loadNotes()
             },
             log = { Log.i(TAG, it); DiagLog.i("update check: $it") },
         )
+        // An install handed to the installer that this process never saw the end of: the version
+        // moved, so it worked, and the backend is told now (it may have been off the net then).
+        val handedFrom = prefs.getLong(KEY_HANDED_FROM, 0L)
+        if (handedFrom > 0L && handedFrom < BuildConfig.VERSION_CODE) {
+            prefs.edit { putLong(KEY_HANDED_FROM, 0L) }
+            report("installed", handedFrom, BuildConfig.VERSION_CODE.toLong(), current, null)
+        }
+        pendingOffer?.let {
+            pendingOffer = null
+            noteOffer(context, it)
+            return
+        }
         loadNotes()
-        // A download left from an install that has since finished or been given up.
         scope.launch(Dispatchers.IO) {
-            apkFile(context).takeIf { System.currentTimeMillis() - it.lastModified() > 60 * 60 * 1000L }?.delete()
+            // Either the prefetch, or a download the viewer backed out of at the installer. Kept
+            // while it is still the package on offer, dropped as soon as the backend moves on.
+            val file = apkFile(context)
+            val age = System.currentTimeMillis() - file.lastModified()
+            val mine = offer?.takeIf { it.sha256 == sha256Of(file) && age < KEEP_MS }
+            if (mine != null) {
+                ready = verify(context.applicationContext, file, mine) != null
+            } else if (age > 60 * 60 * 1000L) {
+                file.delete()
+            }
         }
     }
 
@@ -127,8 +236,225 @@ object Updates {
     }
 
     fun diagnostics(): String = if (!started) "not initialized" else
-        "known=${prefs.getString("latest", null) ?: "unknown"}; notes=${notes.size}; ${checker?.diagnostics}"
+        "known=${prefs.getString("latest", null) ?: "unknown"}; offer=${offer?.versionName ?: "none"}; notes=${notes.size}; ${checker?.diagnostics}"
 
+
+
+    // ---- The household backend's offer (see local/tv-manager/UPGRADE-DESIGN.md) ----
+
+    /**
+     * What the backend sent along with the screen-time rules: the release this TV should move to, or
+     * nothing. Called on every rules pull, so it must be cheap - it only acts when the offer changed,
+     * and then starts the background fetch.
+     */
+    /**
+     * Whether what the backend just sent differs from what this TV is already sitting on. `forced`
+     * belongs in the comparison, not just the build: a parent can enable a release and mark it
+     * forced minutes later — exactly the order the 1.79 (103) push went out in on 2026-11-03, on a
+     * TV that had already prefetched the APK and then showed "new version" forever. Coming back
+     * through here is cheap: prefetch hashes the cached file instead of downloading, and
+     * [autoInstall] still only ever takes one build to the installer once (KEY_AUTO_TRIED).
+     */
+    internal fun offerChanged(from: Offer?, to: Offer?): Boolean =
+        from?.versionCode != to?.versionCode || from?.url != to?.url || from?.forced != to?.forced
+
+    fun noteOffer(context: Context, update: JSONObject?) {
+        if (!started) { pendingOffer = update; return }
+        val next = parse(update)
+        if (!offerChanged(offer, next)) return
+        offer = next
+        available = next?.versionName
+        ready = false
+        prefs.edit { putString(KEY_OFFER, next?.let { write(it) }.orEmpty()); putInt(KEY_PREFETCH_FAILS, 0) }
+        val app = context.applicationContext
+        if (next == null) {
+            Log.i(TAG, "backend has nothing for this TV")
+            return
+        }
+        Log.i(TAG, "backend offers ${next.versionName} (${next.versionCode})")
+        scope.launch { prefetch(app, next) }
+    }
+
+    /** Saved in the same shape the backend sends, so [readOffer] can hand it straight to [parse]. */
+    private fun write(o: Offer): String = JSONObject()
+        .put("available", true)
+        .put("versionName", o.versionName).put("versionCode", o.versionCode).put("url", o.url)
+        .put("size", o.size).put("sha256", o.sha256).put("notes", o.notes).put("forced", o.forced).toString()
+
+    /** The offer kept across restarts, so a TV that lost the NAS still says "1.73, tap to install". */
+    private fun readOffer(): Offer? =
+        runCatching { parse(JSONObject(prefs.getString(KEY_OFFER, "").orEmpty())) }.getOrNull()
+
+    /**
+     * An offer is only trusted as far as it points at this household's own backend: a tampered
+     * response must not turn Aerial into a downloader for somebody else's server. The name of the
+     * package is fixed by the backend's own whitelist; here the shape is checked again. [base] is a
+     * parameter only so the unit test can stand where the build-time address would be.
+     */
+    internal fun parse(update: JSONObject?, base: String = ScreenTime.baseUrl): Offer? {
+        if (update == null || !update.optBoolean("available")) return null
+        val url = update.optString("url")
+        val ok = base.isNotEmpty() && url.startsWith("$base/releases/") && !url.contains("..")
+        if (!ok) {
+            Log.w(TAG, "ignoring an offer that is not from this household's backend: $url")
+            return null
+        }
+        val hash = update.optString("sha256").lowercase()
+        val code = update.optLong("versionCode", 0L)
+        val name = update.optString("versionName")
+        if (!hash.matches(Regex("[0-9a-f]{64}")) || code <= BuildConfig.VERSION_CODE ||
+            !name.matches(Regex("\\d+(\\.\\d+)*"))
+        ) {
+            Log.w(TAG, "ignoring an offer that does not check out: $name/$code")
+            return null
+        }
+        return Offer(name, code, url, update.optLong("size"), hash, update.optString("notes"),
+            update.optBoolean("forced"))
+    }
+
+    /**
+     * Fetch the offered APK now, quietly. A LAN copy of 3 MB is a second, and the TV that is off the
+     * network when its owner next opens Control Center still has what it was promised. Nothing here
+     * touches [install]: a prefetch must not put a progress bar on the viewer's screen.
+     */
+    private suspend fun prefetch(app: Context, o: Offer) = withContext(Dispatchers.IO) {
+        if (prefetching) return@withContext
+        prefetching = true
+        try {
+            val file = apkFile(app)
+            if (o.sha256 == sha256Of(file)) {
+                ready = verify(app, file, o) != null
+                if (ready && o.forced) autoInstall(app, o)
+                return@withContext
+            }
+            if (!hasRoom(file, o.size)) {
+                Log.i(TAG, "not prefetching: no room for ${o.size} bytes in ${file.parentFile}")
+                return@withContext
+            }
+            val done = runCatching { download(o.url, file, o.size, silent = true) }.isSuccess
+            val info = if (done) verify(app, file, o) else null
+            if (info == null) {
+                file.delete()
+                val fails = prefs.getInt(KEY_PREFETCH_FAILS, 0) + 1
+                prefs.edit { putInt(KEY_PREFETCH_FAILS, fails) }
+                Log.w(TAG, "prefetch failed ($fails of $PREFETCH_GIVE_UP) for ${o.versionName}")
+                if (fails == PREFETCH_GIVE_UP) report("failed", BuildConfig.VERSION_CODE.toLong(), o.versionCode, o.versionName, "download")
+                return@withContext
+            }
+            ready = true
+            prefs.edit { putInt(KEY_PREFETCH_FAILS, 0) }
+            Log.i(TAG, "prefetched ${o.versionName}, ready to install")
+            if (o.forced) autoInstall(app, o)
+        } finally {
+            prefetching = false
+        }
+    }
+
+    /**
+     * A `forced` release does not wait for someone to find the button: with the APK verified in the
+     * cache, this hands it to [install] exactly as a press in Control Center would. The firmware
+     * decides how much is automatic from there - Android 12 and later may replace Aerial without a
+     * page (as since 1.72), older Android shows its own confirmation, which the viewer may refuse.
+     * One try per offered build: a refusal stands until the backend offers something else.
+     */
+    private fun autoInstall(app: Context, o: Offer) {
+        if (prefs.getLong(KEY_AUTO_TRIED, 0L) == o.versionCode) return
+        prefs.edit { putLong(KEY_AUTO_TRIED, o.versionCode) }
+        Log.i(TAG, "forced update ${o.versionName} (${o.versionCode}): taking it to the installer")
+        DiagLog.i("update: forced ${o.versionName}; installer asked without a press")
+        main.post { install(app) }
+    }
+
+    /** Whether the partition holding the cache can take the APK and what the installer needs beside it. */
+    private fun hasRoom(file: File, size: Long): Boolean {
+        var dir = file.parentFile
+        while (dir != null && !dir.isDirectory) dir = dir.parentFile
+        val path = dir ?: return true // mkdirs gets its own failure path if there is nowhere to write
+        return runCatching { StatFs(path.path).availableBytes > size * ROOM_FACTOR }.getOrDefault(true)
+    }
+
+    private fun sha256Of(file: File): String? = runCatching {
+        if (!file.isFile) return null
+        val md = MessageDigest.getInstance("SHA-256")
+        file.inputStream().use { input ->
+            val buf = ByteArray(64 * 1024)
+            while (true) {
+                val n = input.read(buf)
+                if (n < 0) break
+                md.update(buf, 0, n)
+            }
+        }
+        md.digest().joinToString("") { "%02x".format(it) }
+    }.getOrNull()
+
+    /** What the prefetch left in the cache, still matching what the backend offers. */
+    private fun cached(context: Context, file: File, o: Offer): PackageInfo? = verify(context, file, o)
+
+    /** What the website path left behind when the owner backed out at the installer. */
+    private fun cachedUpstream(context: Context, file: File): PackageInfo? =
+        verify(context, file)?.takeIf { testApk == null && it.versionName?.substringBefore('-') == available }
+
+    /** The viewer asked for this one now: one clean try, no room check and no give-up counter. */
+    private suspend fun fetch(context: Context, file: File, o: Offer): PackageInfo? {
+        if (!copyTestApk(file)) {
+            val ok = runCatching { download(o.url, file, o.size) }
+                .onFailure { Log.w(TAG, "could not download ${o.url}", it) }.isSuccess
+            if (!ok) {
+                file.delete()
+                return null
+            }
+        }
+        val info = verify(context, file, o)
+        if (info == null) file.delete()
+        return info
+    }
+
+    private fun copyTestApk(file: File): Boolean {
+        val test = testApk?.takeIf { it.isFile } ?: return false
+        file.parentFile?.mkdirs()
+        test.copyTo(file, overwrite = true)
+        if (Build.VERSION.SDK_INT < 24) file.setReadable(true, false)
+        return true
+    }
+
+    /** The word the backend's event log understands. */
+    private fun reason(f: Failure): String = when (f) {
+        Failure.Download -> "download"
+        Failure.Blocked -> "blocked"
+        Failure.NotOfficial -> "not_official"
+        Failure.NotNewer -> "not_newer"
+    }
+
+    /**
+     * What the backend asked for, or nothing: the same checks [install] makes, run after a fetch.
+     * The digest is what proves the bytes came off the NAS whole over plain http; a package pushed
+     * in by the `update_test` hook cannot match it, so it is excused there ([testApk]).
+     */
+    private fun verify(
+        context: Context,
+        file: File,
+        o: Offer,
+        digest: Boolean = testApk == null,
+    ): PackageInfo? {
+        val info = verify(context, file) ?: return null
+        if (digest && sha256Of(file) != o.sha256) {
+            Log.w(TAG, "the downloaded APK is not the one offered")
+            return null
+        }
+        if (!sameSigner(context, info)) {
+            Log.w(TAG, "the offered APK is signed differently from this copy")
+            return null
+        }
+        if (versionCode(info) < o.versionCode) {
+            Log.w(TAG, "the offered APK is ${versionCode(info)}, older than the ${o.versionCode} promised")
+            return null
+        }
+        return info
+    }
+
+    /** So the household backend can show which TV is on what, and which update never landed. */
+    private fun report(stage: String, from: Long, to: Long, name: String?, reason: String?) =
+        ScreenTime.reportUpdate(stage, from, to, name, reason)
     /**
      * The release notes for [available], from the copy kept with the version it was read for, else
      * from the website (once per new version; the update page asks again while it has none). The
@@ -156,6 +482,8 @@ object Updates {
             notes = parsed
         }
     }
+
+
 
     /** Whether version [a] comes after [b], comparing dotted numbers ("1.10" after "1.9"). */
     fun newer(a: String, b: String): Boolean {
@@ -249,25 +577,41 @@ object Updates {
         install = Install.Downloading(0f)
         scope.launch {
             val file = apkFile(app)
-            val ready = withContext(Dispatchers.IO) {
-                // A download kept from a moment ago, when the owner backed out of the installer.
-                verify(app, file)?.takeIf { testApk == null && it.versionName?.substringBefore('-') == available }
-                    ?: downloadFrom(app, file)
+            val o = offer
+            val apk = withContext(Dispatchers.IO) {
+                // What the prefetch already fetched, or a download kept from a moment ago when the
+                // owner backed out of the installer. Where there is an offer it is matched by its
+                // digest, not by the version name: the backend can publish a second build of one
+                // number, and installing the stale half of it would look like a broken update.
+                (o?.let { cached(app, file, it) } ?: cachedUpstream(app, file))
+                    ?: o?.let { fetch(app, file, it) } ?: downloadFrom(app, file)
             }
             val failure = when {
-                ready == null -> Failure.Download
-                !sameSigner(app, ready) -> Failure.NotOfficial
-                versionCode(ready) < BuildConfig.VERSION_CODE -> Failure.NotNewer
+                apk == null -> Failure.Download
+                !sameSigner(app, apk) -> Failure.NotOfficial
+                versionCode(apk) < BuildConfig.VERSION_CODE -> Failure.NotNewer
                 else -> null
             }
             if (failure != null) {
                 Log.w(TAG, "not installing: $failure")
                 if (failure != Failure.Download) file.delete()
                 install = Install.Failed(failure)
+                report("failed", BuildConfig.VERSION_CODE.toLong(), o?.versionCode ?: 0L,
+                    o?.versionName ?: available, reason(failure))
                 return@launch
             }
+            val to = apk?.let { versionCode(it) } ?: o?.versionCode ?: 0L
+            val name = apk?.versionName?.substringBefore('-') ?: o?.versionName ?: available
+            // The last request this process may get to make: the installer replaces it on success.
+            // Whether the version really moved is reported next time Aerial starts (init).
+            prefs.edit { putLong(KEY_HANDED_FROM, BuildConfig.VERSION_CODE.toLong()) }
             val opened = if (Build.VERSION.SDK_INT >= 28) installBySession(app, file) else openInstaller(context, app, file)
-            if (!opened) install = Install.Failed(Failure.Blocked)
+            if (opened) {
+                report("handed", BuildConfig.VERSION_CODE.toLong(), to, name, null)
+            } else {
+                install = Install.Failed(Failure.Blocked)
+                report("failed", BuildConfig.VERSION_CODE.toLong(), to, name, "blocked")
+            }
         }
     }
 
@@ -489,6 +833,8 @@ object Updates {
             PackageInstaller.STATUS_FAILURE_ABORTED -> {
                 Log.i(TAG, "update not confirmed")
                 install = Install.Idle
+                report("declined", BuildConfig.VERSION_CODE.toLong(), offer?.versionCode ?: 0L,
+                    offer?.versionName ?: available, "aborted")
             }
             else -> {
                 val message = intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE)
@@ -503,7 +849,11 @@ object Updates {
                 }
                 Log.w(TAG, "install session failed ($status, $message); opening the installer")
                 DiagLog.i("update: session failed ($status, $message); installer")
-                if (!file.isFile || !openInstaller(app, app, file)) install = Install.Failed(Failure.Blocked)
+                if (!file.isFile || !openInstaller(app, app, file)) {
+                    install = Install.Failed(Failure.Blocked)
+                    report("failed", BuildConfig.VERSION_CODE.toLong(), offer?.versionCode ?: 0L,
+                        offer?.versionName ?: available, "blocked")
+                }
             }
         }
     }
@@ -542,7 +892,14 @@ object Updates {
     fun onHomeResumed() {
         homeInFront = true
         checker?.setActive(true)
-        if (install == Install.Opened) install = Install.Idle
+        // A forced update that finished its prefetch while the viewer was somewhere else gets its
+        // one automatic try here, where the installer's page cannot interrupt an app being watched.
+        offer?.takeIf { it.forced && ready }?.let { autoInstall(appContext, it) }
+        if (install == Install.Opened) {
+            install = Install.Idle
+            report("declined", BuildConfig.VERSION_CODE.toLong(), offer?.versionCode ?: 0L,
+                offer?.versionName ?: available, "backed_out")
+        }
         awaiting?.let {
             // Only returning from a requested confirmation releases the session's button.
             // Visiting another app while awaiting an answer must not forget the update.
@@ -589,12 +946,7 @@ object Updates {
 
     /** The website first (reachable in China), then GitHub. Returns the APK's info once it parses. */
     private suspend fun downloadFrom(context: Context, file: File): PackageInfo? {
-        testApk?.takeIf { it.isFile }?.let { test ->
-            file.parentFile?.mkdirs()
-            test.copyTo(file, overwrite = true)
-            if (Build.VERSION.SDK_INT < 24) file.setReadable(true, false)
-            return verify(context, file)
-        }
+        if (copyTestApk(file)) return verify(context, file)
         val name = "aerial-${BuildConfig.FLAVOR}.apk"
         val sources = listOf(
             "https://aerial.qust.me/download/$name",
@@ -610,7 +962,7 @@ object Updates {
         return null
     }
 
-    private suspend fun download(url: String, file: File) {
+    private suspend fun download(url: String, file: File, expect: Long = 0, silent: Boolean = false) {
         val directory = checkNotNull(file.parentFile)
         check(directory.isDirectory || directory.mkdirs()) { "Cannot create update directory: $directory" }
         check(directory.canWrite()) { "Cannot write update directory: $directory" }
@@ -659,8 +1011,11 @@ object Updates {
             // A server that ignores the range sends it all again: start over.
             val append = from > 0 && code == HttpURLConnection.HTTP_PARTIAL
             if (code != HttpURLConnection.HTTP_OK && !append) error("HTTP $code")
+            // A server answering with a login page or its index instead of the package is caught here.
+            if (c.contentType.orEmpty().startsWith("text/")) error("not a package: ${c.contentType}")
             val length = c.contentLength.toLong()
             val total = if (length < 0) -1L else if (append) from + length else length
+            if (expect > 0 && total > 0 && total != expect) error("offered $expect bytes, the server has $total")
             var done = if (append) from else 0L
             windowFrom = done
             var shown = -1
@@ -679,7 +1034,7 @@ object Updates {
                             windowFrom = done
                         }
                         val percent = if (total > 0) (done * 100 / total).toInt() else 0
-                        if (percent != shown) {
+                        if (percent != shown && !silent) {
                             shown = percent
                             withContext(Dispatchers.Main) { install = Install.Downloading(percent / 100f) }
                         }

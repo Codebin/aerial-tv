@@ -5,8 +5,27 @@
 #   TV=<tv-ip> tools/install.sh guard         # for firmwares that refuse to install a launcher
 #   KEEP_ADB=1 TV=<tv-ip> tools/install.sh    # also switch ADB back on whenever the TV turns it off
 #   TV=<tv-ip> tools/install.sh repair        # Home went back to the TV's launcher: restart Home Guard
+#   TV=<tv-ip> tools/install.sh rollback      # put back the APK this script last backed up (see below)
 #   TV=<tv-ip> tools/install.sh lite          # Aerial Lite; chosen by itself on Android 4.0-4.4,
 #                                             # refused on 5.0+ (FORCE_LITE=1 to try it there)
+#
+# Every install first pulls the APK the TV is running into local/backups/tv/ (NO_BACKUP=1 to skip),
+# because adb gives no way back afterwards and that file is the only copy of exactly what worked on
+# this set. After installing, the script checks Aerial really starts and stays up; if it does not, it
+# installs the backup again (`adb install -r -d`) and says so. To go back by hand later:
+#
+#   TV=<tv-ip> tools/install.sh rollback              # most recent backup
+#   TV=<tv-ip> ROLLBACK_APK=local/backups/tv/x.apk tools/install.sh rollback
+#   cat local/backups/tv/index.txt                    # what each backup is: model, version, signer
+#
+# Rolling back over a newer versionCode needs `-d`; firmwares that refuse it (and any TCL reached
+# through 多屏互动, which only accepts a *higher* versionCode) can only be moved forward — fix the
+# build and push the next versionCode instead.
+#
+# An update signed with a different key cannot be installed over: Android refuses it. The script
+# stops and says so rather than uninstalling, because uninstalling costs the owner their wallpapers,
+# uploaded photos, app layout and settings. Only REINSTALL=1 uninstalls, and it refuses unless the
+# current APK was backed up first.
 #
 # The APK comes from the latest release (aerial.qust.me's copy, else GitHub): needs adb, curl
 # and unzip to check the download (and python3 on TCL TVs).
@@ -35,13 +54,28 @@ cd "$(dirname "$0")/.."
 REPO=pengchujin/aerial-tv
 command -v adb >/dev/null || { echo "adb not found. macOS: brew install android-platform-tools; Linux: install android-tools / adb." >&2; exit 1; }
 FLAVOR="${1:-standard}"
-case "$FLAVOR" in standard|guard|repair|lite) ;; *) echo "flavor must be standard, guard or lite (or repair)" >&2; exit 1 ;; esac
+case "$FLAVOR" in standard|guard|repair|rollback|lite) ;; *) echo "flavor must be standard, guard, lite, repair or rollback" >&2; exit 1 ;; esac
 PKG=app.orchard.tv
 GUARD="$PKG/$PKG.guard.HomeGuardService"
 
-export ANDROID_HOME="${ANDROID_HOME:-$HOME/Library/Android/sdk}"
+# The SDK sits in different places on different machines (Android Studio's default, a Homebrew
+# install, a hand-placed one), and a missing apksigner would silently mean "no signature
+# comparison was made". So look for it the way the build does: the environment first, then this
+# checkout's own local.properties.
+if [ -z "${ANDROID_HOME:-}" ]; then
+  ANDROID_HOME="$HOME/Library/Android/sdk"
+  if [ ! -d "$ANDROID_HOME/build-tools" ] && [ -f local.properties ]; then
+    FROM_PROPS=$(sed -n 's/^sdk\.dir=//p' local.properties | tail -1)
+    if [ -n "$FROM_PROPS" ] && [ -d "$FROM_PROPS/build-tools" ]; then ANDROID_HOME="$FROM_PROPS"; fi
+  fi
+fi
+export ANDROID_HOME
+# apksigner needs a JDK as well, and it is used whether the APK was built here or downloaded: with
+# no Java it writes nothing to stdout, which would read as "no certificate" and quietly skip the
+# signature comparison. So probe for it always, not only when building.
+export JAVA_HOME="${JAVA_HOME:-$(/usr/libexec/java_home -v 17 2>/dev/null || echo /opt/homebrew/opt/openjdk@17)}"
+[ -d "$JAVA_HOME" ] || unset JAVA_HOME
 if [ "${BUILD:-0}" = 1 ]; then
-  export JAVA_HOME="${JAVA_HOME:-$(/usr/libexec/java_home -v 17 2>/dev/null || echo /opt/homebrew/opt/openjdk@17)}"
   [ -f local.properties ] || echo "sdk.dir=$ANDROID_HOME" > local.properties
 fi
 
@@ -278,6 +312,133 @@ installed_now() {
   if [ -n "$WANT" ]; then [ "$now" = "$WANT" ]; else [ -n "$now" ] && [ "$now" != "$BEFORE" ]; fi
 }
 
+# ------------------------------------- what the TV runs now, and how to get it back
+BACKUP_DIR=local/backups/tv
+BACKUP=""                        # set once the running APK has been pulled off the TV
+
+apksigner_of() {   # newest apksigner, or empty without the Android SDK
+  ls "$ANDROID_HOME"/build-tools/*/apksigner 2>/dev/null | sort -V | tail -1
+}
+
+apk_signer() {   # certificate SHA-256 of an APK on disk, lowercase, no colons; empty if unreadable
+  # The field is "Signer #1 certificate SHA-256 digest:" on today's build-tools and
+  # "Certificate SHA-256 digest:" on older ones. An unreadable certificate must never read as
+  # "matches": the caller decides what not knowing means, and says so out loud.
+  local s out dig
+  s=$(apksigner_of)
+  [ -n "$s" ] || return 0
+  out=$("$s" verify --print-certs "$1" 2>/dev/null) || true
+  dig=$(printf '%s\n' "$out" |
+        sed -n 's/^Signer #[0-9][0-9]* certificate SHA-256 digest: //p;s/^Certificate SHA-256 digest: //p' |
+        head -1)
+  printf '%s' "$dig" | tr -d ':' | tr 'A-Z' 'a-z' | tr -d '[:space:]'
+}
+
+installed_apk() {   # the APK the TV is running, as one path on the device
+  adb shell pm path "$PKG" 2>/dev/null | sed -n 's/^package://p' | grep -v '\.split_' | head -1 | tr -d '\r'
+}
+
+backup_running() {
+  # There is no "undo this install" in adb, and once a package is replaced the old APK is gone from
+  # the device — so the copy on the TV before this run is the rollback point. Pull it while it is
+  # still there; a build/ directory only proves what was compiled, not what this set ran fine on.
+  local remote model code sum
+  [ "${NO_BACKUP:-0}" = 1 ] && return 0
+  remote=$(installed_apk)
+  [ -n "$remote" ] || return 0
+  mkdir -p "$BACKUP_DIR"
+  model=$(adb shell getprop ro.product.model 2>/dev/null | tr -d '\r\n' | tr -c 'A-Za-z0-9._-' '-' | sed 's/^-*//;s/-*$//')
+  code=$(installed_code)
+  BACKUP="$BACKUP_DIR/$(date +%Y%m%d-%H%M%S)-${model:-tv}-${code:-unknown}.apk"
+  if ! adb pull "$remote" "$BACKUP" >/dev/null 2>&1; then
+    BACKUP=""
+    echo "Could not pull the running APK off the TV; this install will have no rollback point." >&2
+    return 0
+  fi
+  sum=$( (shasum -a 256 "$BACKUP" 2>/dev/null || sha256sum "$BACKUP" 2>/dev/null) | cut -c1-16)
+  printf '%s\t%s\tversionCode=%s\tsha256=%s\ttv=%s\n' \
+    "$(date +%Y-%m-%dT%H:%M:%S)" "$BACKUP" "$code" "$sum" "${TV%%:*}" >> "$BACKUP_DIR/index.txt"
+  echo "Backed up what this TV runs now: $BACKUP (versionCode ${code:-?})"
+}
+
+health_ok() {   # Aerial came up and stayed up
+  local pid front
+  pid=$(adb shell pidof "$PKG" 2>/dev/null | tr -d '\r' | tr -s ' ')
+  if [ -z "$pid" ]; then echo "Aerial is not running." >&2; return 1; fi
+  front=$(adb shell dumpsys activity activities 2>/dev/null |
+          sed -n 's/.*topResumedActivity=Intent { cmp=\([^ }]*\).*/\1/p;s/.*mResumedActivity: ActivityRecord{\([^ }]*\).*/\1/p' |
+          head -1 | tr -d '\r')
+  # Only a missing process or a crash proves a bad build. Something else in front usually means the
+  # firmware kept Home for its own launcher, which this script answers by turning Home Guard on;
+  # rolling back over that would replace a working build with an older one.
+  case "$front" in
+    ""|"$PKG"*) ;;
+    # Android 10 and older describe the resumed activity as
+    # "mResumedActivity: ActivityRecord{86b58f0 u0 app.orchard.tv/.MainActivity t9998}", where the
+    # first field is an internal id. Only a real package/activity is worth a message; an id means
+    # the pattern did not fit and guessing from it would print nonsense.
+    */*) echo "note: something else is in front ($front). If Home still opens the TV's own launcher," >&2
+         echo "      Home Guard takes over below — that is not a reason to roll back." >&2 ;;
+    *) ;;
+  esac
+  if adb shell logcat -d -b crash 2>/dev/null | tr -d '\r' | grep -q "$PKG"; then
+    echo "Aerial crashed on start: the TV's crash log names it." >&2; return 1
+  fi
+  return 0
+}
+
+rollback_to() {   # put one APK back on, whatever the versionCode ordering says
+  local apk=$1 out
+  if [ -z "$apk" ] || [ ! -f "$apk" ]; then echo "No backup to roll back to ($apk)." >&2; return 1; fi
+  echo "  adb install -r -d $apk"
+  out=$(adb install -r -d "$apk" 2>&1 | tr -d '\r') || true
+  if ! printf '%s' "$out" | grep -q Success; then
+    case "$out" in
+      *UPDATE_INCOMPATIBLE*|*INCONSISTENT_CERTIFICATES*)
+        # Happens when the folder holds copies of two different keys, e.g. an official build saved
+        # before this household switched to its own: that APK can never be installed over the
+        # current one, whatever the versionCode says.
+        echo "That APK is signed with a different key than the Aerial on this TV: $out" >&2
+        echo "It cannot be installed over it. Pick one signed like the copy on the TV:" >&2
+        echo "  see $BACKUP_DIR/index.txt (each line carries the signer it was pulled from)" >&2
+        ;;
+      *VERSION_DOWNGRADE*)
+        echo "Android refused to go back to a lower versionCode: $out" >&2
+        echo "The backup stays at $apk. Two ways on from here:" >&2
+        echo "  - fix the build and push a higher versionCode (the usual way on TCL: 多屏互动 only" >&2
+        echo "    accepts a higher one, so a rollback through it is not possible at all);" >&2
+        echo "  - adb uninstall, then install the backup — which costs the owner their wallpapers," >&2
+        echo "    uploaded photos, app layout and settings. Their call, not a script's." >&2
+        ;;
+      *)
+        echo "The rollback install did not take: $out" >&2
+        ;;
+    esac
+    return 1
+  fi
+  adb shell am start -n "$PKG/.MainActivity" >/dev/null 2>&1 || true
+  return 0
+}
+
+verify_install() {   # before anything is called done: a broken build must not be left on the TV
+  health_ok && return 0
+  echo
+  echo "Aerial does not look healthy after this install." >&2
+  if [ -z "$BACKUP" ]; then
+    echo "No backup was taken, so nothing else was changed. To put the old build back by hand:" >&2
+    echo "  TV=$TV ROLLBACK_APK=<the apk you have> $0 rollback" >&2
+    return 1
+  fi
+  rollback_to "$BACKUP" || return 1
+  if health_ok; then
+    echo "Rolled back: this TV runs versionCode $(installed_code) again."
+    echo "The build that did not work stays at $APK — fix it, do not push it again."
+  else
+    echo "Rolled back, but Aerial still does not come up. This TV needs a person: $BACKUP" >&2
+  fi
+  return 1
+}
+
 # TCL's 多屏互动 (system app) installs APKs that TCL's phone app pushes to it; tools/tcast-push.py
 # speaks that protocol. The TV downloads the APK from this computer through an ADB reverse tunnel,
 # so nothing is served on the network. The viewer confirms once on the TV (同意).
@@ -321,8 +482,99 @@ install_apk() {
   adb install -r "$apk" 2>&1
 }
 
+# ------------------------------- rollback as a command of its own
+if [ "$FLAVOR" = rollback ]; then
+  # Separate from an install on purpose: it never builds and never downloads, and an overwrite
+  # install leaves the package's data alone — so the TV comes back as it was, with the Home role,
+  # the guard binding, the wallpapers and the owner's layout all still in place.
+  target="${ROLLBACK_APK:-}"
+  if [ -z "$target" ]; then
+    target=$(ls -t "$BACKUP_DIR"/*.apk 2>/dev/null | head -1)
+    if [ -z "$target" ]; then
+      echo "No backups under $BACKUP_DIR. Pass ROLLBACK_APK=<apk> — for instance a build kept in the" >&2
+      echo "NAS release bank, which keeps every file it was ever given: http://${TV%:*}:9080/releases/" >&2
+      exit 1
+    fi
+  fi
+  [ -f "$target" ] || { echo "No such APK: $target" >&2; exit 1; }
+  # A backup folder can hold copies of two keys — an official build saved before this household
+  # switched to its own, for instance. Android will never take that one over the current copy, so
+  # when no APK was named, pick the newest backup signed like what the TV runs now, and refuse the
+  # choice outright rather than pass on a muddled install error.
+  live_tmp=$(mktemp -d)/live.apk
+  live_remote=$(installed_apk)
+  LIVE_SIGNER=""
+  if [ -n "$live_remote" ] && adb pull "$live_remote" "$live_tmp" >/dev/null 2>&1; then
+    LIVE_SIGNER=$(apk_signer "$live_tmp")
+  fi
+  rm -f "$live_tmp"
+  if [ -n "$LIVE_SIGNER" ]; then
+    if [ -z "${ROLLBACK_APK:-}" ]; then
+      for f in $(ls -t "$BACKUP_DIR"/*.apk 2>/dev/null); do
+        if [ "$(apk_signer "$f")" = "$LIVE_SIGNER" ]; then target="$f"; break; fi
+      done
+    elif [ "$(apk_signer "$target")" != "$LIVE_SIGNER" ]; then
+      echo "That APK is signed with a different key than the Aerial on this TV, so it cannot be" >&2
+      echo "installed over it. Backups that can (newest first):" >&2
+      for f in $(ls -t "$BACKUP_DIR"/*.apk 2>/dev/null); do
+        [ "$(apk_signer "$f")" = "$LIVE_SIGNER" ] && echo "  $f" >&2
+      done
+      exit 1
+    fi
+  fi
+  echo "Rolling $TV back to $(basename "$target")"
+  BACKUP=""          # a failing health check here must not roll the rollback back
+  rollback_to "$target" || exit 1
+  if health_ok; then
+    echo "This TV is back on versionCode $(installed_code) and Aerial is up."
+    echo "If Home still opens the TV's own launcher: TV=$TV tools/install.sh repair"
+    exit 0
+  fi
+  echo "The old build is installed, but Aerial does not come up. This TV needs a person." >&2
+  exit 1
+fi
+
 BEFORE=$(installed_code)
 APK=$(build "$FLAVOR")
+
+if [ -n "$BEFORE" ]; then
+  backup_running                       # the rollback point, taken before anything is replaced
+  if [ -n "$BACKUP" ]; then
+    NEW_SIGNER=$(apk_signer "$APK"); OLD_SIGNER=$(apk_signer "$BACKUP")
+    if [ -z "$NEW_SIGNER" ] || [ -z "$OLD_SIGNER" ]; then
+      # Saying nothing here would be the dangerous option: an unreadable certificate looks exactly
+      # like a match, and the run would carry on as though it had been checked.
+      echo "note: no signing certificate could be read (apksigner needs a JDK), so the two copies" >&2
+      echo "      were not compared here; Android itself will still refuse a mismatched install." >&2
+    elif [ "$NEW_SIGNER" != "$OLD_SIGNER" ]; then
+      if [ "${REINSTALL:-0}" = 1 ]; then
+        echo "Different key from the copy on this TV, and REINSTALL=1 says to replace it."
+        echo "Uninstalling it now: wallpapers, uploaded photos, app layout and settings go with it."
+        echo "Its APK is kept at ${BACKUP}."
+      else
+        echo "This APK is signed with a different key than the Aerial already on this TV." >&2
+        echo "Built with: $NEW_SIGNER" >&2
+        echo "On the TV:  $OLD_SIGNER" >&2
+        echo "Nothing was installed; the TV still runs what it ran before." >&2
+        echo "Uninstalling first would cost the owner their wallpapers, uploaded photos, app layout" >&2
+        echo "and settings, so this script will not decide that on its own." >&2
+        echo "The usual cause is a build that fell back to this machine's debug key because" >&2
+        echo "local/signing.properties is missing (docs/HANDOFF.md). To replace this copy anyway:" >&2
+        echo "  REINSTALL=1 TV=$TV $0 $FLAVOR" >&2
+        exit 1
+      fi
+    fi
+  fi
+  if [ "${REINSTALL:-0}" = 1 ]; then
+    echo "REINSTALL=1: uninstalling this TV's Aerial first. Wallpapers, photos, layout and settings" >&2
+    echo "are lost with it. Backup of what was on it: ${BACKUP:-none}" >&2
+    adb uninstall "$PKG" >/dev/null 2>&1 || true
+    sleep 2
+  fi
+fi
+# Only crash entries from this run on: health_ok must not blame an old crash on a new build.
+adb shell logcat -c -b crash >/dev/null 2>&1 || true
+
 echo "Installing $APK"
 # Some firmwares exit 0 on a failed install (TCL p331, Android 5.1: "Failure [INSTALL_PARSE_FAILED_
 # INCONSISTENT_CERTIFICATES]" with exit 0, issue #1017), so only "Success" counts.
@@ -460,6 +712,7 @@ if [ "$FLAVOR" = standard ]; then
   case "$HOME_NOW" in
     "$PKG"/*)
       echo "Aerial is the home screen ($HOME_NOW)."
+      verify_install || exit 1
       exit 0 ;;
   esac
   echo "The firmware still sends Home to $HOME_NOW; turning on Aerial Home Guard."
@@ -477,12 +730,14 @@ adb shell settings put secure accessibility_enabled 1
 
 if wait_guard 6; then
   echo "Home Guard is running. Press Home on the remote."
+  verify_install || exit 1
   exit 0
 fi
 echo "Home Guard is enabled but Android has not started it; restarting Aerial."
 restart_aerial
 if wait_guard 8; then
   echo "Home Guard is running. Press Home on the remote."
+  verify_install || exit 1
   exit 0
 fi
 echo "Home Guard is enabled but Android has not started it." >&2
