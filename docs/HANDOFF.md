@@ -162,6 +162,7 @@
   - **真机结果**：Samsung SM-G998B 09:20:58 `handed` → 09:21:04 `installed`，NAS 记 **1.82（110）**——enable 后 28 秒装完，走的是 `Updates.offerChanged` 里 forced 参与比较那条修复（这个修复随 1.82 才第一次上电视）。Sony KD-65X9500H 发布时离线（还停 1.79/103），上线后 30 秒心跳会收到 offer 自动装，尚未确认。
   - **坑（下次跑测试注意）**：单测构建把 `local/tv-manager.properties` 的 `TV_MANAGER_URL`/`TOKEN` 编进 BuildConfig，Robolectric 跑 `ScreenTime` 相关测试时真给 NAS 接入了 3 台叫 robolectric 的假电视——已用 `device/del` 按 id 清掉；电视端测试要么让 `ScreenTime` 在 Robolectric 不发心跳，要么跑完记得清。
   - `main` 还没推 `origin`（等主人定）。下次发版 versionCode ≥ 111。
+- **版本号规则定了（主人 2026-11-04，已写进 AGENTS.md）**：`versionName` 大版本跟官网主线一致（跟上游就发 1.82），本户功能版用第三段 1.82.1、1.82.2…每发 +1，上游新一轮大版本时第三段归零；`versionCode` 不分段、始终严格 +1。链路三处已放宽支持三段号：NAS `api/server.py` 的 `APK_FILE_RE`（`aerial-*-1.82.1-111.apk` 可登记）、`local/tv-manager/publish-apk.sh` 的版本校验（电视端 `Updates.parse` 的 `\d+(\.\d+)*` 本来就支持，`newer()` 按段比数，1.82.1 > 1.82）。`test_api.py` 加了 1.82.1 登记/offer 用例（**238 / 0**），`publish.sh` 已把新 `server.py` 部署到 NAS（过 probe 门禁）。PIN 现放 `local/tv-manager.env`（600、gitignored），`publish-apk.sh` 自动读。
 
 ## 现状（2026-11-03）
 
