@@ -3,7 +3,10 @@ package app.orchard.tv.guard
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import app.orchard.tv.apps.AppInventory
 import app.orchard.tv.apps.TileSheet
+import app.orchard.tv.screentime.ScreenTime
+import app.orchard.tv.screentime.ScreenTimeOverlay
 import app.orchard.tv.settings.AerialSettings
 import app.orchard.tv.settings.Restricted
 import app.orchard.tv.settings.Effects
@@ -44,11 +47,31 @@ import kotlinx.coroutines.launch
  *                                   until Aerial restarts; for trying an update before a release)
  *   ... --ez update_test_self true  (the same with the APK Aerial runs from: a reinstall, for TVs whose
  *                                   shell cannot write Android/data, as TCL MT5879's)
+ *   ... --es pill_preview "看视频 · 剩 57 分"   (draw the screen-time pill now, without a managed app in
+ *                                   front; "off" goes back to the rules — for checking the pill's size
+ *                                   and place against a real picture)
+ *   ... --es stime_dump 1         (every number the screen-time rules are running on — cached rules,
+ *                                   day tallies, per-policy decision values — written to
+ *                                   Android/data/app.orchard.tv/files/stime_dump.txt for adb pull,
+ *                                   and to logcat; debug only, changes nothing; see ScreenTime)
  * The manifest requires the sender to hold WRITE_SECURE_SETTINGS, which the ADB shell has and
  * ordinary apps cannot get, so no other app on the TV can flip these.
  */
 class ConfigReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
+        // ... --es pill_preview <text|off>   (see the class comment; nothing is saved)
+        intent.getStringExtra("pill_preview")?.let { text ->
+            ScreenTimeOverlay.showPreview(context, text.takeUnless { it == "off" })
+            resultData = "pill_preview $text"
+            return
+        }
+        // ... --es stime_dump 1   (the screen-time diagnostics file; see the class comment)
+        intent.getStringExtra("stime_dump")?.takeUnless { it == "0" || it == "off" }?.let {
+            // The receiver runs on the main thread, which is where ScreenTime keeps its session
+            // fields, so the dump reads them consistently. One small file write, no network.
+            resultData = ScreenTime.dumpDiagnostics(context.applicationContext)
+            return
+        }
         // ... --es export_tiles <name>   (every tile on one picture; see TileSheet)
         // Runs on past the broadcast's time limit; Home keeps the process alive. Look for the file.
         intent.getStringExtra("export_tiles")?.takeIf { Regex("^[A-Za-z0-9_-]+$").matches(it) }?.let { name ->
@@ -58,6 +81,23 @@ class ConfigReceiver : BroadcastReceiver() {
                 runCatching { TileSheet.export(app, name) }.onFailure { android.util.Log.e("AerialTiles", "Export failed", it) }
             }
             resultData = "exporting $name"
+            return
+        }
+        // ... --ez report_apps true   (report this TV's app list to the backend now, whatever the
+        //                              fingerprint says; the answer says how many rows were read, so
+        //                              a page that looks wrong can be told apart from a TV that has
+        //                              nothing to report)
+        if (intent.getBooleanExtra("report_apps", false)) {
+            val scanned = runCatching {
+                kotlinx.coroutines.runBlocking { AppInventory.scan(context.applicationContext) }
+            }
+            resultData = scanned.fold(
+                onSuccess = { rows ->
+                    ScreenTime.reportAppsNow()
+                    "report_apps rows=${rows.size} " + rows.take(25).joinToString(",") { it.pkg }
+                },
+                onFailure = { "report_apps failed: ${it.javaClass.simpleName} ${it.message}" },
+            )
             return
         }
         // ... --es device_profile '{"hidden":[8],"labels":{"6":"HDMI 2"},"xiaomiSources":{"6":24}}'

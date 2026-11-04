@@ -216,6 +216,35 @@
     <string name="cc_update_failed_signature">The Aerial on this TV is signed differently from the official one, so it cannot be updated over.</string>
     <string name="cc_update_failed_older">The website does not have a newer version yet. Try again in a while.</string>
     <string name="cc_self_compile">Make Aerial Smoother</string>
+    <string name="cc_update_install_now">Install %s</string>
+    <string name="cc_update_ready">%s is already downloaded to this TV and checked. Choose Install to finish.</string>
+    <string name="cc_update_failed_download_manager">The download did not finish from this household\'s own server. Check that the NAS is switched on and the network is up, then try again, or update with the command below.</string>
+    <string name="cc_update_upstream_notice">The official release %s is out. This TV runs a copy signed for this household, so it updates from the household server only.</string>
+    <string name="st_gate_title">%1$s is not available now</string>
+    <string name="st_gate_reason_blocked">A parent turned this app off.</string>
+    <string name="st_gate_reason_window">It is outside this app\'s allowed time.</string>
+    <string name="st_gate_reason_group">Time is up for this kind of app today.</string>
+    <string name="st_gate_reason_tv">TV time is up for today.</string>
+    <string name="st_gate_reason_daylock">Today is disabled on this TV.</string>
+    <string name="st_gate_add_hint">Need more time? Pick an amount, then enter the parent PIN</string>
+    <string name="st_gate_add_15">+15 min</string>
+    <string name="st_gate_add_30">+30 min</string>
+    <string name="st_gate_add_60">+1 hour</string>
+    <string name="st_gate_add_day">Unlock today</string>
+    <string name="st_gate_close">OK</string>
+    <!-- Top-right pill over an app the rules govern (ScreenTimeOverlay). %1$s is the parent's
+         group name, %2$s the countdown; keep it short, it shares the corner with the app's picture. -->
+    <string name="st_pill_app">This app</string>
+    <string name="st_pill_group_left">%1$s · %2$s left</string>
+    <string name="st_pill_group_off">%1$s · off</string>
+    <string name="st_pill_tv_left">Today · %1$s left</string>
+    <string name="st_pill_window_left">Allowed window · %1$s left</string>
+    <string name="st_pill_pass_left">Day pass · %1$s left</string>
+    <string name="st_pill_used_up">Time\'s up</string>
+    <string name="st_pill_dur_hm">%1$d h %2$d min</string>
+    <string name="st_pill_dur_h">%1$d h</string>
+    <string name="st_pill_dur_m">%1$d min</string>
+    <string name="st_pill_dur_soon">under 1 min</string>
     <string name="st_pin">Parental PIN</string>
     <string name="st_pin_off">Off</string>
     <string name="st_pin_on">On</string>

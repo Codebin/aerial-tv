@@ -235,6 +235,19 @@ object AerialSettings {
     val HOME_COLUMNS = 4..6
     private const val DEFAULT_HOME_COLUMNS = 5
 
+    /**
+     * Brings this object up before a caller touches it, for the processes where Aerial's own UI
+     * never started: the guard is bound at boot, starts the screen-time heartbeat, and that poll
+     * writes the backend's PIN here. Verified on Sony BRAVIA 4K UR3 (Android 10) with 1.78 (102):
+     * the poll reached `adoptPinHash` before [init], its `lateinit app` threw on the main thread,
+     * and the whole process restarted every ~20 s — the heartbeat restarted, hit the same wall,
+     * and screen time never registered. [init] is idempotent, so this costs nothing when Home
+     * already set it up.
+     */
+    fun ensureReady(context: Context) {
+        if (!started) init(context)
+    }
+
     fun init(context: Context) {
         if (started) return
         started = true
@@ -293,6 +306,14 @@ object AerialSettings {
 
     val locked: Boolean get() = pinSet && SystemClock.elapsedRealtime() > unlockedUntil
 
+    /**
+     * Whether [pin] is this TV's parental PIN, without unlocking anything. The screen-time gate asks
+     * for the same PIN, and going through [unlock] would hand out ten minutes of unlocked settings
+     * as a side effect of letting the child watch a bit longer — exactly what the PIN is there to
+     * prevent. Callers that do want the ten minutes keep using [unlock].
+     */
+    fun matches(pin: String): Boolean = pinSet && hash(pin) == pinHash
+
     fun unlock(pin: String): Boolean {
         if (hash(pin) != pinHash) return false
         unlockedUntil = SystemClock.elapsedRealtime() + UNLOCK_MS
@@ -313,6 +334,32 @@ object AerialSettings {
         // to hold at once, not after the next Home press (issue #718).
         unlockedUntil = 0L
         app.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit { putString("pin_hash", pinHash); putBoolean("pin_arrows", pinArrows) }
+    }
+
+    /**
+     * Takes over the parent PIN the screen-time backend hands down (tv-manager is the one place
+     * the household sets it; 户主, 2026-10-31). Only a SHA-256 hash travels, so this compares and
+     * stores without ever seeing the digits — and a wrong-shaped value is ignored, never written.
+     *
+     * A missing hash means "the backend has no PIN", which is not an instruction to drop this
+     * TV's: losing the lock that protects the settings by accident would be worse than the two
+     * disagreeing for a while. Returns true only when something actually changed.
+     */
+    fun adoptPinHash(hex: String?): Boolean {
+        val want = hex?.trim()?.lowercase()?.takeIf { it.length == 64 && it.all { c -> c in "0123456789abcdef" } }
+            ?: return false
+        if (want == pinHash && !pinArrows) return false
+        pinHash = want
+        pinSet = true
+        // The backend's PIN is four digits; a TV that was using the arrow code follows it.
+        pinArrows = false
+        // A PIN that just changed must not leave a session open behind it.
+        unlockedUntil = 0L
+        app.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit {
+            putString("pin_hash", pinHash)
+            putBoolean("pin_arrows", false)
+        }
+        return true
     }
 
     private fun hash(pin: String): String =

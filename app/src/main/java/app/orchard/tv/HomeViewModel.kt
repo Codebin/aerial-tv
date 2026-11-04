@@ -21,6 +21,7 @@ import app.orchard.tv.apps.SourceLooks
 import app.orchard.tv.apps.FOLDER_KEY_PREFIX
 import app.orchard.tv.apps.SOURCE_KEY_PREFIX
 import app.orchard.tv.apps.LayoutStore
+import app.orchard.tv.screentime.ScreenTime
 import app.orchard.tv.apps.TileArt
 import app.orchard.tv.apps.TileArtFactory
 import app.orchard.tv.apps.folderEntry
@@ -70,6 +71,13 @@ sealed interface Overlay {
     data class Pin(val mode: PinMode, val onDone: () -> Unit) : Overlay
     /** Setting up Kids and Elders mode (Restricted), from Personalize. */
     data object Kids : Overlay
+
+    /**
+     * The child ran into a screen-time limit: [pkg] is the app they tried to open (or were watching
+     * when the limit came), [reason] says which limit it was. Named TimeLimit rather than ScreenTime
+     * so it cannot be mistaken for app.orchard.tv.screentime.ScreenTime in this same file.
+     */
+    data class TimeLimit(val pkg: String, val reason: ScreenTime.Reason, val groupId: String?) : Overlay
 }
 
 enum class CcPage { Main, Inputs, InputSettings, Update, Setup }
