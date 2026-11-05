@@ -122,6 +122,16 @@
   - 不合：功能类 PR #1303 #1291 #1292 #1290 #1273；PR #1289 CI 要户主定；#1144 已拆分关闭。
   - 要信息：#1304 Redmi A55 航拍壁纸 HDMI 黑、#1305 海信 U8E 紫屏（请试 guard）、#1306 MFTR0 待机一晚停原桌面（`usage=false`，有第三方 `com.ts.launcher`）、#1286 NSOP0 4K 黑、#1267 m7642 杜比视界屏保、#1234 m7642 开机 5 秒（给 TCL 开机组件命令）、#1283、#561、#1287、#1235、#883、#1225、#1126。
   - Lite：这轮的修复都在守护里，Lite 没有守护，没有可移植的。
+## 现状（2026-11-05，本机）
+
+- **1.85.1（versionCode 117）已登记进后台版本库并强制推给客户端（2026-11-05 12:53–13:02，本机）**：主人要求同步官网主线 1.85 并发强制更新。本户 `main` 上那 4 个定制提交整包变基到官方 tag `v1.85`（dde34b9）之上；**基线停在 tag**，官方 main 在 1.85 之后多的那个代码提交（PR #1251 海信视频壁纸 + PR #1259）没带进来（主人 2026-11-05 同意：只跟到 1.85）。
+  - **号**：`versionName = "1.85.1"`（主线 1.85 + 本户第三段，主人 2026-11-04 定的规则），`versionCode = 117`——官方 1.83=112、1.84=114、1.85=116 已经用掉，取 117 才能让装过官网包的电视也认它更新（本户库里上一个号 110 的 +1 那位 111 已被官网占用）。下次发版 **≥ 118**。
+  - **变基冲突**只有两处：`HomeGuardService.kt`（上游 1.85 把 `userUnlocked` 重构成 `onUserUnlocked(how)` + 2 秒轮询 `unlockPoll`，本户的 `appCache.clear()` 跟着搬进 `onUserUnlocked`，`ScreenTime.init/attach`、两处 `ScreenTime.onForeground`、`detach` 原样留在各自的点）和 `docs/HANDOFF.md`（官方 11-05/11-04 两段和本机 11-04 那段都留着）。`app/build.gradle.kts`、`MainActivity.kt`、`HomeViewModel.kt`、`ControlCenter.kt`、`ARCHITECTURE.md`、五份 strings、`Updates.kt`、`install.sh` 都自动合上；上游 1.83–1.85 没碰 `Updates.kt`，所以本户的 offer / 预取 / sha256 / forced / report 那套没动过。
+  - **验证**：standard + guard 单元测试 **524 个 / 0 失败**（66 个套件）；跑测试前把 `local/tv-manager.properties` 改名断开 NAS，免得再把 robolectric 假电视塞进版本库（1.82 那轮的坑）。两个 release 包构建通过：standard 3,199,462 B（sha256 a440feb9…）、guard 3,199,254 B（a1ca1bc8…），`publish-apk.sh --check` 包名 / 签名 / 版本号 / 三段文件名全过。**没有逐台真机验过官方 1.83–1.85 的新功能**（酷开 `reopenAsHome` 节流、当贝被强停后重绑接管、康佳切源先行、乐视 Lite 面板、TCL `DISPLAY_SETTINGS`），家里的 Sony 和 Samsung 都走不到那些路径，只是装上能跑；小米 MFTR0 和 TCL MT5879 这轮不在本机可达范围。
+  - **发布**：`publish-apk.sh` 登记 `rel-117s`（standard）与 `rel-117g`（guard，按 1.85.1 登记、剥 `-guard` 后缀），sha256 NAS 复核一致；API `release/enable` + **立刻** `release/forced`，一次做完。guard 只登记不启用（两台 flavor 都是 standard）。`--notes` 带的是本户这次的说明，电视升级页显示。
+  - **真机结果**：Samsung SM-G998B 12:55:40 `handed` → 12:55:47 `installed`，NAS 记 **1.85.1（117）**，forced 链路自己装完，19 秒。**Sony KD-65X9500H（Android 10）12:55:38 `handed` → 12:55:52 `declined` / `backed_out`**——和 11-04 发 1.82 时一模一样，根因是这台 1.79 客户端的 `install permissions` 里**没有 `REQUEST_INSTALL_PACKAGES`**（9 条已授予里没有它），forced 只能把它送到系统的授权页，没人点就回前台；`KEY_AUTO_TRIED` 记下 117 之后这个号不会再自动重试。按主人同意走 adb 保底：`appops set app.orchard.tv REQUEST_INSTALL_PACKAGES allow` + `BUILD=1 KEEP_ADB=1 TV=$SONY_TV tools/install.sh`（备份 103 → 装 117，屏保 / 桌面 / ADB 三项设置照旧），13:02:09 NAS 记 `installed`。**下次做静默安装要顾这条**：Android 10 这类没授予安装权限的电视，forced 到不了底。
+  - **回归**：两台 `versionName 1.85.1 / versionCode 117`、Aerial 在前台、守护在 `enabled_accessibility_services` 里、屏保组件仍是 `app.orchard.tv/.dream.AerialDream`；主页键从云视听小电视（Sony）和系统显示设置（Samsung）都 2 秒内拉回 Aerial；`logcat` 没有 FATAL / ANR。Sony 编译档 `speed`，Samsung `run-from-apk`（电视自装那条路不带 .dm，交给系统的后台编译）。
+  - `sync-1.85.1` 已快进 `main`，**仍未推 `origin`**（等主人定）。
 
 ## 现状（2026-11-05）
 

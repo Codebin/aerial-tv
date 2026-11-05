@@ -22,7 +22,7 @@ source local/tvs.env && BUILD=1 KEEP_ADB=1 TV=$XIAOMI_TV tools/install.sh   # BU
 - 在电视上测试一律用 release 版，并连同 APK 里的 .dm 一起装（`adb install-multiple -r x.apk x.dm`，命令见 `docs/HANDOFF.md`「日常操作」），装完看 `dumpsys package dexopt` 是 `speed-profile`。debug 版在电视上会卡；小米 MFTR0 上 `install -r` 后再 `compile -m speed` 得到的是没编译的 `verify`。
 - 发 TCL 版本前先给 `versionCode` 加 1。
 - **日常 APK 更新走后台升级链路，adb 只作保底**（户主 2026-11-02 定）：`local/tv-manager/publish-apk.sh`（PIN 自动从 `local/tv-manager.env` 读）构建并校验签名后登记进 NAS 版本库（登记≠发布，页面上启用才到达电视）→ 家长页启用/强制 → 电视 30 秒心跳收到 offer、控制中心安装。每次要发新版，`versionCode` 严格 +1，库里的号不重用。电视离线、升级失败救急时才用 `tools/install.sh` / `adb install -r`。
-- **版本号规则**（户主 2026-11-04 定）：`versionName` 的大版本必须和官网主线一致——跟上游发布时用官网号（如上游 1.82 就发 1.82）；本户在主线之上的功能版用第三段：**1.82.1、1.82.2 …**，每发一次第三段 +1；跟上游到新一轮大版本时第三段归零（如 1.83）。`versionCode` 不分段，始终严格 +1。文件名、NAS 白名单、电视端解析都支持三段（`aerial-standard-1.82.1-111.apk`）。
+- **版本号规则**（户主 2026-11-04 定）：`versionName` 的大版本必须和官网主线一致——跟上游发布时用官网号（如上游 1.82 就发 1.82）；本户在主线之上的功能版用第三段：**1.82.1、1.82.2 …**，每发一次第三段 +1；跟上游到新一轮大版本时第三段归零（如 1.83）。`versionCode` 不分段，始终严格 +1；跟上游同步那一版要取**比官网已用号段更大**的号（官网 1.85=116 → 本户 1.85.1 用 117），否则装过官网包的电视不认。文件名、NAS 白名单、电视端解析都支持三段（`aerial-standard-1.82.1-111.apk`）。
 
 ## 代码约定
 
