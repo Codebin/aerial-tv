@@ -17,6 +17,7 @@ import android.database.ContentObserver
 import android.media.AudioManager
 import android.media.tv.TvInputManager
 import android.os.Build
+import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.PowerManager
@@ -2549,7 +2550,7 @@ class HomeGuardService : AccessibilityService() {
         return performGlobalAction(GLOBAL_ACTION_HOME)
     }
 
-    private fun goHome(woke: Boolean = false, reopenBoot: Boolean = false) {
+    private fun goHome(woke: Boolean = false, reopenBoot: Boolean = false, gate: Bundle? = null) {
         if (!GuardSetup.isUserUnlocked(this)) return
         // Starting an activity can light the screen: on OPPO K9 the TV came back on by itself a few
         // seconds into standby (issue #22). The screen-on check takes over at wake instead.
@@ -2568,6 +2569,7 @@ class HomeGuardService : AccessibilityService() {
         runCatching {
             val intent = MainActivity.bringBackIntent(this).putExtra(MainActivity.EXTRA_WOKE, woke)
                 .putExtra(MainActivity.EXTRA_REOPEN_BOOT, reopenBoot)
+            gate?.let { intent.putExtras(it) }
             if (!startPastHomeHold(intent)) startActivity(intent)
         }.onFailure { Log.w(TAG, "could not bring Aerial Home to the front", it) }
     }
@@ -2989,10 +2991,11 @@ class HomeGuardService : AccessibilityService() {
 
         val isRunning: Boolean get() = instance != null
 
-        /** Brings Aerial's Home to the front as Home does; false while the guard is not running. */
-        fun bringAerialBack(): Boolean {
+        /** Brings Aerial's Home to the front as Home does; false while the guard is not running.
+         * [gate] rides along on the Home intent (a screen-time limit shows its card from there). */
+        fun bringAerialBack(gate: Bundle? = null): Boolean {
             val s = instance ?: return false
-            s.handler.post { s.goHome() }
+            s.handler.post { s.goHome(gate = gate) }
             return true
         }
 

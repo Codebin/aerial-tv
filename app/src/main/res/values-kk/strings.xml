@@ -234,6 +234,7 @@
     <string name="st_pill_dur_hm">%1$d сағ %2$d мин</string>
     <string name="st_pill_dur_h">%1$d сағ</string>
     <string name="st_pill_dur_m">%1$d мин</string>
+    <string name="st_pill_dur_ms">%1$d:%2$02d</string>
     <string name="st_pill_dur_soon">1 мин аз</string>
     <string name="st_pin">Ата-аналық PIN-код</string>
     <string name="st_pin_off">Өшірулі</string>

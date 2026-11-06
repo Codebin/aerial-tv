@@ -234,6 +234,7 @@
     <string name="st_pill_dur_hm">%1$d год %2$d хв</string>
     <string name="st_pill_dur_h">%1$d год</string>
     <string name="st_pill_dur_m">%1$d хв</string>
+    <string name="st_pill_dur_ms">%1$d:%2$02d</string>
     <string name="st_pill_dur_soon">менше 1 хв</string>
     <string name="st_pin">Батьківський PIN-код</string>
     <string name="st_pin_off">Вимк.</string>
