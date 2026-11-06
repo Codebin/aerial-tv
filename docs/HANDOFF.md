@@ -401,6 +401,12 @@
   - **发布**：`publish-apk.sh` 登记 `rel-119s`（standard）与 `rel-119g`（guard，剥 `-guard` 后缀按 1.86.1 登记），API `release/enable` + 立刻 `release/forced`，一次做完；guard 只登记不启用（两台 flavor 都是 standard）。`--notes` 用本户说明。
   - **真机结果（发布当时）**：Samsung SM-G998B 16:45:21 `handed`「目标 1.86.1（119）」后掉线，`installed` 回执未见——三段号 1.86.1 电视端解析、119>118 比较都成立（offer 正常触发）。Sony KD-65X9500H 16:07 后离线，这轮 offer 没到，还停 **1.85.1（117）**（上午的 118 它 declined，`KEY_AUTO_TRIED` 记的 119 上线后会自动试一次；这台没有 `REQUEST_INSTALL_PACKAGES`，掉到授权页就得 adb 保底，同 11-05）。**两台上线后记得回看 NAS 事件确认 installed。**
   - 顺手清了两台 robolectric 假电视（`tv-d01f93c134c6`、`tv-96c5c0b4a0ae`，上午测试轮留下的，`device/del` 按 id）。
+
+- **1.86.2（versionCode 120）紧急重发（2026-11-06 晚，本机）**：主人报告 Samsung SM-G998B 客户端已是 1.86.1、后台还记 1.85.2（118）且策略管控失效。
+  - **根因**：1.86.1 的 release 包是在**单测前的 `local/tv-manager.properties` 断开还没恢复**时构建的，`TV_MANAGER_URL`/`TOKEN` 编译成空串（`BuildConfig.java` 与 dex 均证实）→ `ScreenTime.enabled=false`，整个屏幕时间模块静默自关：不心跳、不拉规则、不拦截、无 `installed` 回执。桌面与守护本身正常，所以客户端看着只是「升级成功」——后台版本、管控、回执全断。不是上游 1.86 代码问题，也没丢电视上的任何设置/登记数据。
+  - **修**：号不重用 → **1.86.2（120）**。恢复 properties 后重建（构建日志出 `cleartext host = 192.168.3.3`，dex 里地址命中 3 处），`rel-120s` 登记+启用+强制，`rel-120g` 只登记。Samsung 的坏 119 收不到轮询（更新检查靠 ScreenTime 心跳或事件触发：开 App / 网络切换 / 控制中心），上线用一下会自己收到 120 自愈；保底 `adb shell am broadcast -a app.orchard.tv.CONFIG -n app.orchard.tv/.guard.ConfigReceiver --ez check_update true`。Sony 全程离线，还停 117，上线自动试 120。
+  - **门禁（`publish-apk.sh`，local/ 不入库）**：登记前从 `local/tv-manager.properties` 读 baseUrl 的 host，对 APK 的 `classes*.dex` 逐个 grep，缺了就拒绝发布（双向试过）。坑：不能用 `grep -q`，它命中即退、`unzip` 吃 SIGPIPE，`pipefail` 下把健康包误杀。
+  - **流程教训**：断开跑测试 → **记得恢复再构建 release**（上一段「跑测试前改名」是半条规则）。下次发版 **≥ 121**。
   - `sync-1.86.1` 之后快进 `main`，**仍未推 `origin`**（等主人定）。
 
 ## 现状（2026-11-06）
