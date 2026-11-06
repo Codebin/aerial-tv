@@ -390,6 +390,18 @@
   - 请报告人提 PR：#1348 坚果 S60 开机输入源被盖住（报告人有实机验证过的四处补丁，我们没有坚果）。
   - 要信息：#1316 TCL tc8000 唤醒被 `interceptStrWakeup` 拦（开 `guard_off_in_standby` 也拦，请完全关守护对照，同型号 #371）、#1352 雷鸟鹤 7 Pro（只有 USB 授权）、#1304 Redmi A55 4K 壁纸后 HDMI 黑（要 pid）、#1286 NSOP0 影片壁纸黑（先换静态对照；`com.mitv.tvhome` 被停用）、#1306 #1229 #1283 #1346 小米 / 极米开机和待机、#1267、#1023、#1245、#1225、#1321、#1339、#1350、#1308、#1322、#1340、#1320、#1319、#981、#433、#883、#1311、#1313、#1287。
   - Lite：#1342 的 MStar 面板、#1355 的索尼亮度移植了；其余是守护、TvInputManager、城市库，Lite 没有。
+## 现状（2026-11-06，本机）
+
+- **1.86.1（versionCode 119）已登记进后台版本库并强制推给客户端（2026-11-06 下午，本机）**：主人要求同步官网主线 1.86。本户 `main` 的 7 个提交整包变基到官方 tag `v1.86`（249688a）；本轮之前叠了一个上午未提交的 1.85.2 段（见下），所以 `sync-1.86.1` 上的链条是 6 个旧提交 + 秒表改动 + 本轮 HANDOFF。
+  - **1.85.2（118，今天上午 08:31 已发布 `rel-118s`/`rel-118g`，当时没提交代码、没记 HANDOFF，现在都补上）**：屏幕时间胶囊按主人 11-05 的要求改最后一分钟秒级——`ScreenTimeOverlay` 自己的秒针在最后一分钟 0:59→0:00 逐秒重画（`st_pill_dur_ms`，五语同一格式串），`ScreenTime.tickLoop` 进入最后一分钟把本地决策换成 1 秒一轮（心跳仍 30 秒），到点拉回没生效时每秒重发（Sony KD-65X9500H 的 Android 10 后台启动被静默丢，倒计时走完 app 还在放）；拉回先走守护的无障碍通道 `HomeGuardService.bringAerialBack(gate)`，守护没绑定才 `startActivity`。这条已在 Sony/Samsung 上强制过一轮。
+  - **号**：`versionName = "1.86.1"`（主线 1.86 + 本户第三段；官网 1.86 用掉 118，本户上午的 1.85.2 也用掉 118，本包与官网号脱钩所以带第三段，同 1.85.1 先例），`versionCode = 119`——按「取比官网已用号段更大」的规则 118 不能再用。下次发版 **≥ 120**。
+  - **上游 1.86 增量（v1.85..v1.86 共 16 个提交）**：#1251 自家视频壁纸取帧改进程内解关键帧 + 解码错误重试、#1245 从原桌面上被停的进程回来就开 Aerial、#1301 开机 `com.yunos.tv.bluray` 拉回 + 安卓 7 以下通知监听自己进名单、#1297 当贝 IndexActivity 算原桌面、#1229 目标被原桌面窗口盖住重新打开、#1284 每秒 `queryEvents` 挪后台线程、#1071 `bootStockMs` 上限 45 秒、#115 `neverFilterKeys`、PR #1282 长按菜单越界（#1097）、PR #1294 长虹 mt5520_ll、`install.sh` 的 mt5873 换 guard（#684）、README 与机型笔记。
+  - **变基冲突**只有两处：`app/build.gradle.kts`（上游 118/1.86 vs 本户号，直接落 119/1.86.1）和 `docs/HANDOFF.md`（官方 11-06 巡检段和本机各段都保留）。`HomeGuardService.kt`、`MainActivity.kt`、`Updates.kt`、`install.sh`、五份 strings 全自动合上——合完核过：`ScreenTime.init`/`ScreenTimeOverlay.attach` 在绑定处、两处 `detach`、两处 `ScreenTime.onForeground`、上游 `onUserUnlocked(how)` 里的 `appCache.clear()`、本户 `goHome(gate)`/`bringAerialBack(gate)`、`install.sh` 本户备份回退与上游 mt5873 判断都在。
+  - **验证**：standard + guard 单元测试各 296 个 / **0 失败**（37 个套件）；跑测试前照旧把 `local/tv-manager.properties` 改名（本轮 `.bak-1861-sync`）断开 NAS，**发完版记得改回来**。两个 release 包构建通过：standard 3,193,428 B（sha256 559cf6cc…）、guard 3,193,275 B（51c0327e…），`publish-apk.sh --check` 包名 / 签名 / 版本号 / 三段文件名全过。**没有逐台真机验过上游 1.86 的新功能**（家里 Sony/Samsung 走不到那些路径；小米 MFTR0、TCL MT5879 这轮不可达）。
+  - **发布**：`publish-apk.sh` 登记 `rel-119s`（standard）与 `rel-119g`（guard，剥 `-guard` 后缀按 1.86.1 登记），API `release/enable` + 立刻 `release/forced`，一次做完；guard 只登记不启用（两台 flavor 都是 standard）。`--notes` 用本户说明。
+  - **真机结果（发布当时）**：Samsung SM-G998B 16:45:21 `handed`「目标 1.86.1（119）」后掉线，`installed` 回执未见——三段号 1.86.1 电视端解析、119>118 比较都成立（offer 正常触发）。Sony KD-65X9500H 16:07 后离线，这轮 offer 没到，还停 **1.85.1（117）**（上午的 118 它 declined，`KEY_AUTO_TRIED` 记的 119 上线后会自动试一次；这台没有 `REQUEST_INSTALL_PACKAGES`，掉到授权页就得 adb 保底，同 11-05）。**两台上线后记得回看 NAS 事件确认 installed。**
+  - 顺手清了两台 robolectric 假电视（`tv-d01f93c134c6`、`tv-96c5c0b4a0ae`，上午测试轮留下的，`device/del` 按 id）。
+  - `sync-1.86.1` 之后快进 `main`，**仍未推 `origin`**（等主人定）。
 
 ## 现状（2026-11-06）
 
