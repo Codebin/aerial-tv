@@ -46,6 +46,18 @@ object ScreenTime {
     private const val TAG = "AerialScreenTime"
     private const val PREFS = "screen_time"
     private const val TICK_MS = 30_000L
+
+    /**
+     * The last minute of a countdown is judged every second (owner, 2026-11-05): a stop that waits
+     * for the next 30 s tick lets the viewer overrun the rule by that much — and the phone page,
+     * which counts every settled minute, then reads "over by X" for time that was never allowed.
+     * The heartbeat does not speed up; only the local decision does. Once a fresh exception or a
+     * lifted rule puts the boundary further away than this window again, the loop falls back to
+     * TICK_MS on its own.
+     */
+    private const val FAST_TICK_MS = 1_000L
+    private const val FAST_WINDOW_MS = 60_000L
+
     private const val CONNECT_MS = 4_000
     private const val READ_MS = 8_000
     private const val MAX_PENDING = 400
@@ -287,6 +299,10 @@ object ScreenTime {
         frontSince = now
         persist()
         publishStatus()
+        // An app that already spent its time gets pulled back the moment it comes up — through the
+        // system launcher, recents or voice, not only Aerial's own tiles, whose check in
+        // MainActivity.launch this path cannot rely on.
+        watchForLimit()
     }
 
     /**
@@ -300,7 +316,8 @@ object ScreenTime {
 
     /**
      * Hands the rule in force to [onStatus], and nothing when it is the same one at the same
-     * minute: the tick loop calls this every thirty seconds, and the pill shows whole minutes.
+     * minute: the tick loop calls it every tick, and the pill's seconds run on the pill's own
+     * clock — a per-second re-announcement of the same minute would only redraw the same text.
      */
     private fun publishStatus() {
         val pkg = frontPkg
@@ -707,17 +724,42 @@ object ScreenTime {
     // --------------------------------------------------------------------- backend round trips
 
     private suspend fun tickLoop() {
+        // Started so the very first pass does its round trip, whatever the clock says yet.
+        var lastBeat = -TICK_MS
         while (true) {
             // Close the running session into the day tally so a TV left on all day keeps counting,
             // then push what accumulated. Doing it here keeps the main thread out of the network.
-            withContext(Dispatchers.Main) {
+            val near = withContext(Dispatchers.Main) {
                 closeFront(SystemClock.elapsedRealtime())
                 watchForLimit()
                 publishStatus()
+                lastMinute()
             }
-            if (secret.isEmpty()) enrol() else { push(); pullRulesIfStale(); pushApps() }
-            delay(TICK_MS)
+            val now = SystemClock.elapsedRealtime()
+            // The heartbeat keeps its 30 s beat even while the decisions run every second: the
+            // last minute needs a faster stop, not a faster round trip.
+            if (secret.isEmpty()) enrol()
+            else if (now - lastBeat >= TICK_MS) {
+                lastBeat = now
+                push(); pullRulesIfStale(); pushApps()
+            }
+            delay(if (near) FAST_TICK_MS else TICK_MS)
         }
+    }
+
+    /**
+     * Whether the loop must look again within the second instead of the half minute: the front
+     * app's rule crosses zero inside [FAST_WINDOW_MS] — quota, window closing, exception running
+     * out, whichever answers — or it already blocks and the app is still in front, which means a
+     * pull-back was dropped and retries belong on the fast beat. A TV with no rule in front (the
+     * launcher itself, an app in no group) has nothing to time. Runs on the main thread from the
+     * tick loop, like everything that touches frontPkg.
+     */
+    private fun lastMinute(): Boolean {
+        val pkg = frontPkg ?: return false
+        val s = status(pkg) ?: return false
+        if (s.blocks) return true
+        return s.leftMs in 1..FAST_WINDOW_MS
     }
 
     /**
@@ -731,11 +773,16 @@ object ScreenTime {
         if (pkg == null) { limitNotified = null; return }
         val block = check(pkg)
         if (block == null) { limitNotified = null; return }
+        // The pull-back is asked again on every look while the stopped app is still in front:
+        // a firmware that dropped the first request keeps the app playing silently (Android 10
+        // background activity starts, Sony KD-65X9500H 2026-11-06 — the countdown ended, nothing
+        // moved, and only pressing Home explained why). Once the viewer is home, frontPkg goes
+        // null and this stops; only the parent's event log keeps the once-per-overrun rule.
+        onBlocked?.invoke(block)
         val key = block.pkg + "|" + block.reason.name
         if (key == limitNotified) return
         limitNotified = key
         reportBlock(block)                     // the parent sees it in the event log
-        onBlocked?.invoke(block)               // Aerial comes back and shows the gate
     }
 
     private suspend fun enrol() = withContext(Dispatchers.IO) {

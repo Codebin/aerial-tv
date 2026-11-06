@@ -8,6 +8,7 @@ import android.graphics.PixelFormat
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.os.Build
+import android.os.SystemClock
 import android.text.TextUtils
 import android.util.Log
 import android.util.TypedValue
@@ -41,6 +42,17 @@ object ScreenTimeOverlay {
     private var manager: WindowManager? = null
     private var view: TextView? = null
     private var shown: ScreenTime.Status? = null
+
+    /** When [shown] was announced; the pill counts down from its snapshot at its own second hand. */
+    private var shownSince = 0L
+
+    /**
+     * Redraws the pill one second later. Only the last minute of a countdown ticks by seconds
+     * (owner, 2026-11-05): before it the pill reads in whole minutes, which the announcements
+     * every tick already keep correct, and the announcement that crosses into the last minute is
+     * what starts this hand.
+     */
+    private val secondTick = Runnable { drawCurrent() }
 
     /**
      * A line drawn whether or not a managed app is in front, for checking the pill against a real
@@ -97,17 +109,50 @@ object ScreenTimeOverlay {
 
     private fun show(s: AccessibilityService, status: ScreenTime.Status) {
         shown = status
-        val text = label(s, status)
+        shownSince = SystemClock.elapsedRealtime()
+        drawCurrent()
+    }
+
+    /**
+     * Draws `shown` as it reads right now: the countdown of a live rule is its snapshot's leftMs
+     * minus the time gone since. That runs exactly 1:1 for the rules that count down to a stop —
+     * a quota only spends while its app is in front, which is when the pill exists at all; a
+     * window's end and an exception's expiry are wall clock. When the seconds reach zero, the
+     * tick loop (running every second by then) does the stopping; the pill may show 0:00 for a
+     * beat before it goes away.
+     */
+    private fun drawCurrent() {
+        val s = service ?: return
+        val st = shown ?: return       // a preview took the pill over, or it was detached
+        val left = (st.leftMs - (SystemClock.elapsedRealtime() - shownSince)).coerceAtLeast(0)
+        val live = if (countingDown(st)) st.copy(leftMs = left) else st
+        val text = label(s, live)
         if (text.isNullOrEmpty()) {
             hide()
             return
         }
         draw(s, text)
+        val v = view ?: return
+        v.removeCallbacks(secondTick)
+        // The seconds hand runs only for the last minute, wherever that minute comes from: a
+        // quota spent down to it, a window about to close, an exception about to run out.
+        if (countingDown(live) && live.leftMs < 60_000) v.postDelayed(secondTick, 1_000)
+    }
+
+    /**
+     * Whether the pill's line carries a countdown that walks with the clock. A rule that blocks
+     * now shows why, not how long (its leftMs counts to a *release* — the next window, midnight —
+     * and must not tick down on the pill), and "Time's up" has nothing left to count.
+     */
+    private fun countingDown(s: ScreenTime.Status): Boolean = when {
+        s.blocks -> false
+        s.kind == ScreenTime.Kind.Window || s.kind == ScreenTime.Kind.Passed -> true
+        else -> s.leftMs > 0
     }
 
     private fun draw(s: AccessibilityService, text: String) {
         val v = view ?: makeView(s).also { add(it) } ?: return
-        v.text = text
+        if (v.text.toString() != text) v.text = text
     }
 
     private fun hide() {
@@ -185,10 +230,15 @@ object ScreenTimeOverlay {
         }
     }
 
-    /** Whole minutes, the way a countdown reads: 1 h 20 min, 45 min, under 1 min. */
+    /**
+     * How a countdown reads: minutes ("1 h 20 min", "45 min") until the last minute, then it ticks
+     * seconds (0:59, 0:45, 0:00) — for every time policy alike, owner 2026-11-05: a quota, a window
+     * closing, an exception running out, all tick their last minute in seconds because that is
+     * the minute the TV judges every second.
+     */
     private fun duration(ctx: Context, ms: Long): String {
-        val total = (ms / 60_000).coerceAtLeast(0)
-        if (total < 1) return ctx.getString(R.string.st_pill_dur_soon)
+        val total = ms / 60_000
+        if (total < 1) return ctx.getString(R.string.st_pill_dur_ms, 0, (ms / 1_000).coerceIn(0, 59))
         val h = total / 60
         val m = total % 60
         return when {

@@ -226,10 +226,19 @@ class MainActivity : ComponentActivity() {
         ScreenTime.init(this)
         // A limit reached while the child is watching (ScreenTime's tick loop, main thread): come
         // back in front of whatever they were watching, carrying the reason in the intent so the
-        // gate shows the right sentence. The tick runs every 30 s, so "at once" means within that.
+        // gate shows the right sentence. The tick runs every 30 s, and every second once the rule
+        // in force enters its last minute — so "at once" means within a second where it counts.
         ScreenTime.onBlocked = { block ->
-            runCatching { startActivity(bringBackIntent(this).limit(block)) }
-                .onFailure { Log.w("AerialMain", "could not come back for a screen-time limit", it) }
+            // Two doors to the same desk. The guard's Home action is the channel the firmwares
+            // answer from under an app — Kids mode has always come back through it — while
+            // Aerial's own start from the background is dropped in silence on some (Android 10
+            // background activity starts, Sony KD-65X9500H, 2026-11-06: the countdown ended and
+            // nothing moved). Where no guard is bound the direct start is all there is.
+            val gate = Intent().limit(block).extras
+            if (!HomeGuardService.bringAerialBack(gate)) {
+                runCatching { startActivity(bringBackIntent(this).limit(block)) }
+                    .onFailure { Log.w("AerialMain", "could not come back for a screen-time limit", it) }
+            }
         }
         startReal(savedInstanceState)
     }
