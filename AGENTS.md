@@ -23,6 +23,7 @@ source local/tvs.env && BUILD=1 KEEP_ADB=1 TV=$XIAOMI_TV tools/install.sh   # BU
 - 发 TCL 版本前先给 `versionCode` 加 1。
 - **日常 APK 更新走后台升级链路，adb 只作保底**（户主 2026-11-02 定）：`local/tv-manager/publish-apk.sh`（PIN 自动从 `local/tv-manager.env` 读）构建并校验签名后登记进 NAS 版本库（登记≠发布，页面上启用才到达电视）→ 家长页启用/强制 → 电视 30 秒心跳收到 offer、控制中心安装。每次要发新版，`versionCode` 严格 +1，库里的号不重用。电视离线、升级失败救急时才用 `tools/install.sh` / `adb install -r`。
 - **版本号规则**（户主 2026-11-04 定）：`versionName` 的大版本必须和官网主线一致——跟上游发布时用官网号（如上游 1.82 就发 1.82）；本户在主线之上的功能版用第三段：**1.82.1、1.82.2 …**，每发一次第三段 +1；跟上游到新一轮大版本时第三段归零（如 1.83）。`versionCode` 不分段，始终严格 +1；跟上游同步那一版要取**比官网已用号段更大**的号（官网 1.85=116 → 本户 1.85.1 用 117），否则装过官网包的电视不认。文件名、NAS 白名单、电视端解析都支持三段（`aerial-standard-1.82.1-111.apk`）。
+- **跟主线发版的固定顺序**（1.86.1 事故后定的，2026-11-06）：跑单测时可以把 `local/tv-manager.properties` 改名断开 NAS（防 robolectric 假电视入库），但**构建 release 前必须恢复它**——地址不在时 `TV_MANAGER_URL`/`TOKEN` 会编译成空串，电视端整个屏幕时间模块（心跳、拉规则、管控、升级回执）会静默自关，桌面看着正常最难查。顺序：变基 → 改号 → 测试（properties 可断）→ **恢复 properties** → `assembleStandardRelease assembleGuardRelease` → `publish-apk.sh --check`（脚本会在登记前 grep APK 的 dex 找后端 host/token，空地址包直接被拒）→ 登记 → `release/enable` + 立刻 `release/forced` → **`local/tv-manager/postcheck.sh <versionCode>`** 确认在线电视都带新心跳回来（离线的等上线自愈；心跳在 = 管控在，这是「发完没死」的验收）。
 
 ## 代码约定
 
