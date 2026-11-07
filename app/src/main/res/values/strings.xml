@@ -225,6 +225,7 @@
     <string name="st_gate_reason_group">Time is up for this kind of app today.</string>
     <string name="st_gate_reason_tv">TV time is up for today.</string>
     <string name="st_gate_reason_daylock">Today is disabled on this TV.</string>
+    <string name="st_gate_reason_fallback">The parent console saw the time run over and locked this app.</string>
     <string name="st_gate_add_hint">Need more time? Pick an amount, then enter the parent PIN</string>
     <string name="st_gate_add_15">+15 min</string>
     <string name="st_gate_add_30">+30 min</string>
