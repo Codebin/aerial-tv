@@ -3026,6 +3026,23 @@ class HomeGuardService : AccessibilityService() {
         }
 
         /**
+         * A screen-time limit reached: Home, asked of the system. Android 10 drops a background
+         * activity start from this very process in silence (Sony KD-65X9500H, 2026-11-07: the
+         * countdown ended, the verdict said blocked, the event log has it, yet the app kept
+         * playing until the viewer pressed Home by hand), while the system's own Home action has
+         * always come back within two seconds on that TV. A Home press cannot carry the gate's
+         * extras, so the block rides in ScreenTime.pendingBlock and Aerial shows it on coming
+         * back. False while the guard is not running, and with the screen off (Home there would
+         * only be wasted).
+         */
+        fun pressHomeForLimit(): Boolean {
+            val s = instance ?: return false
+            if (s.getSystemService<PowerManager>()?.isInteractive == false) return false
+            s.handler.post { s.performGlobalAction(GLOBAL_ACTION_HOME) }
+            return true
+        }
+
+        /**
          * A line at the top of the screen over whatever app is in front (Kids mode's warnings),
          * drawn as the accessibility service's own overlay: no other permission is needed. False
          * where it cannot be (no guard, Android 5.0).

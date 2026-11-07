@@ -11,6 +11,7 @@ import android.provider.Settings
 import android.util.Log
 import app.orchard.tv.BuildConfig
 import app.orchard.tv.apps.AppInventory
+import app.orchard.tv.guard.HomeGuardService
 import app.orchard.tv.settings.AerialSettings
 import app.orchard.tv.update.Updates
 import kotlinx.coroutines.CoroutineScope
@@ -184,6 +185,33 @@ object ScreenTime {
      * itself back and shows the gate. Null until MainActivity sets it.
      */
     @Volatile var onBlocked: ((Block) -> Unit)? = null
+
+    /**
+     * The block the viewer has not been shown the gate for yet. Pulling the TV home and showing
+     * the card cannot ride the same intent: a background activity start from this process is
+     * dropped in silence on Android 10 (Sony KD-65X9500H, 2026-11-07 — the countdown ended, the
+     * verdict said blocked and the event log has it, yet the app kept playing until the viewer
+     * pressed Home), while the guard's system Home action always comes back and carries no
+     * extras. So the pull-back asks the system for Home (see [watchForLimit]) and the block waits
+     * here until Aerial is in front again and takes it ([takePendingBlock]).
+     */
+    @Volatile private var pendingBlock: Block? = null
+    private var pendingBlockAt = 0L
+
+    /** How long a parked block may still be shown: an old overrun must not pop up hours later. */
+    private const val PENDING_BLOCK_MS = 15_000L
+
+    /**
+     * Takes the block parked for display. Null when there is none, or when it has been waiting
+     * longer than [maxAgeMs]: by then the viewer is elsewhere and the card would be about
+     * something they already left behind.
+     */
+    fun takePendingBlock(maxAgeMs: Long = PENDING_BLOCK_MS): Block? {
+        val b = pendingBlock ?: return null
+        pendingBlock = null
+        if (SystemClock.elapsedRealtime() - pendingBlockAt > maxAgeMs) return null
+        return b
+    }
 
     /**
      * Called on the main thread when what is in front starts or stops being governed by a rule:
@@ -770,15 +798,22 @@ object ScreenTime {
      */
     private fun watchForLimit() {
         val pkg = frontPkg
+        // Coming home (or the guard pulling us home) leaves nothing to judge; the parked block
+        // stays: the window event that made frontPkg null may arrive before Aerial's own onResume
+        // takes it for display, and it expires on its own if nobody ever shows it.
         if (pkg == null) { limitNotified = null; return }
         val block = check(pkg)
-        if (block == null) { limitNotified = null; return }
-        // The pull-back is asked again on every look while the stopped app is still in front:
-        // a firmware that dropped the first request keeps the app playing silently (Android 10
-        // background activity starts, Sony KD-65X9500H 2026-11-06 — the countdown ended, nothing
-        // moved, and only pressing Home explained why). Once the viewer is home, frontPkg goes
-        // null and this stops; only the parent's event log keeps the once-per-overrun rule.
-        onBlocked?.invoke(block)
+        if (block == null) { limitNotified = null; pendingBlock = null; return }
+        // The set is asked home through the guard's system Home action on every look while the
+        // stopped app is still in front: a firmware that dropped the first request keeps the app
+        // playing silently (Android 10 background activity starts are dropped in silence, Sony
+        // KD-65X9500H 2026-11-06 and again 2026-11-07 — the countdown ended, nothing moved, and
+        // only pressing Home by hand explained why). The gate's extras cannot ride on a Home
+        // press, so the block waits in [pendingBlock] for Aerial to show it once in front. A TV
+        // with no guard bound has only the direct start, which the same firmwares may drop.
+        pendingBlock = block
+        pendingBlockAt = SystemClock.elapsedRealtime()
+        if (!HomeGuardService.pressHomeForLimit()) onBlocked?.invoke(block)
         val key = block.pkg + "|" + block.reason.name
         if (key == limitNotified) return
         limitNotified = key

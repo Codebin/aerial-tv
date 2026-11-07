@@ -390,6 +390,15 @@
   - 请报告人提 PR：#1348 坚果 S60 开机输入源被盖住（报告人有实机验证过的四处补丁，我们没有坚果）。
   - 要信息：#1316 TCL tc8000 唤醒被 `interceptStrWakeup` 拦（开 `guard_off_in_standby` 也拦，请完全关守护对照，同型号 #371）、#1352 雷鸟鹤 7 Pro（只有 USB 授权）、#1304 Redmi A55 4K 壁纸后 HDMI 黑（要 pid）、#1286 NSOP0 影片壁纸黑（先换静态对照；`com.mitv.tvhome` 被停用）、#1306 #1229 #1283 #1346 小米 / 极米开机和待机、#1267、#1023、#1245、#1225、#1321、#1339、#1350、#1308、#1322、#1340、#1320、#1319、#981、#433、#883、#1311、#1313、#1287。
   - Lite：#1342 的 MStar 面板、#1355 的索尼亮度移植了；其余是守护、TvInputManager、城市库，Lite 没有。
+## 现状（2026-11-07，本机）
+
+- **1.86.3（versionCode 121）修复「Sony 到点不立即锁定」并发布（本机）**：主人报告 Sony 上 g_video 临时加 15 分钟（13:25:41 daypass，13:40:41 到期），到期后 yst 又播到 13:46:03 主人自己按 Home 才停。
+  - **根因（真机钉死）**：到点判定、上报、快轮询全对（stime_dump：frontPkg 认得出、`status=GroupLimit blocks=true`、frontElapsedMs≈840ms 即 1 秒一轮、守护绑定），13:40:45 后台也收到 blocked——**唯独拉回全灭**：`HomeGuardService.goHome` 的 `startActivity` 从 Aerial 自己进程发起，被这台 Android 10 的后台活动启动限制（BAL）**全量静默丢弃**，runCatching 不抛异常，每秒重发也全丢。对照实验：系统特权（adb am start）发同一 intent 3 秒回前台；在电视上按 Home 键 2 秒回 Aerial。1.85.2「每秒重发」只治去抖不治 BAL；昨晚真机闭环恰好因主人刚操作过、处在 BAL 宽限窗，掩盖了问题。
+  - **修**：`watchForLimit` 到点改走守护的**系统 Home 动作** `HomeGuardService.pressHomeForLimit()`（`performGlobalAction(GLOBAL_ACTION_HOME)`，Aerial 是默认 HOME，这条路不受 BAL 限制；亮屏检查，守护没绑才退回直接 start）。Home 按不了 extras，拦截卡改由 `ScreenTime.pendingBlock` 暂存（15 秒新鲜度，过期自动丢），Aerial 回前台在 `onNewIntent`（**必须排在 `vm.onHomePressed` 之后**——它会清空全部 overlay，弹卡放它前面被当帧抹掉，第一版就栽在这）和 `resumeWork` 兜底取走弹卡。`bringAerialBack(gate)` 保留但到点路径不再用它。
+  - **验证**：Sony KD-65X9500H 真机两轮——撤销加时恢复限制后重起银河奇异果，**1 秒内拉回桌面 + 弹《银河奇异果》今天不能看了**（截图 `local/screen-time-shots/sony-gate-121.png`）；standard+guard 全量单测 0 失败；dex 里 NAS 地址 3 处命中。**BlueStacks（Samsung）没跑 121 到点路径**，上线自动升后要看一眼。
+  - **发布**：`publish-apk.sh --no-build` 登记 `rel-121s`/`rel-121g`（guard 只登记），`release/enable` + `release/forced`；`postcheck.sh 121` 过（Sony 后台已记 121——它是 adb `install -r` 先装的验证机，不带 .dm，编译档交给系统后台；Samsung 离线，上线收 offer 121>120 自愈）。**下次发版 versionCode ≥ 122**。
+  - **顺带**：Sony 的 Aerial 日志进不了 logcat 缓冲区、`aerial-diag.log` 也写不出来，取证只有 `stime_dump` 和 usagestats——这台「log 全靠文件、文件只剩 stime_dump」的现状记在这里。
+
 ## 现状（2026-11-06，本机）
 
 - **1.86.1（versionCode 119）已登记进后台版本库并强制推给客户端（2026-11-06 下午，本机）**：主人要求同步官网主线 1.86。本户 `main` 的 7 个提交整包变基到官方 tag `v1.86`（249688a）；本轮之前叠了一个上午未提交的 1.85.2 段（见下），所以 `sync-1.86.1` 上的链条是 6 个旧提交 + 秒表改动 + 本轮 HANDOFF。

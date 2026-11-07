@@ -233,16 +233,13 @@ class MainActivity : ComponentActivity() {
         // gate shows the right sentence. The tick runs every 30 s, and every second once the rule
         // in force enters its last minute — so "at once" means within a second where it counts.
         ScreenTime.onBlocked = { block ->
-            // Two doors to the same desk. The guard's Home action is the channel the firmwares
-            // answer from under an app — Kids mode has always come back through it — while
-            // Aerial's own start from the background is dropped in silence on some (Android 10
-            // background activity starts, Sony KD-65X9500H, 2026-11-06: the countdown ended and
-            // nothing moved). Where no guard is bound the direct start is all there is.
-            val gate = Intent().limit(block).extras
-            if (!HomeGuardService.bringAerialBack(gate)) {
-                runCatching { startActivity(bringBackIntent(this).limit(block)) }
-                    .onFailure { Log.w("AerialMain", "could not come back for a screen-time limit", it) }
-            }
+            // Reached only while no guard is bound: ScreenTime itself asks the guard for the
+            // system Home action on every look, and a Home press cannot carry extras — the card
+            // comes from ScreenTime.pendingBlock once Aerial is back in front (resumeWork /
+            // onNewIntent). The direct start below is all a guard-less TV has, and it is the
+            // request Android 10 drops in silence (Sony KD-65X9500H, 2026-11-07).
+            runCatching { startActivity(bringBackIntent(this).limit(block)) }
+                .onFailure { Log.w("AerialMain", "could not come back for a screen-time limit", it) }
         }
         startReal(savedInstanceState)
     }
@@ -999,6 +996,10 @@ class MainActivity : ComponentActivity() {
             vm.onHomePressed(resetFocus = !openedAppSinceHome)
             openedAppSinceHome = false
         }
+        // A limit the guard pulled Aerial home for: the system Home press carries no extras, so
+        // the block was parked in ScreenTime. Taken after onHomePressed on purpose — that clears
+        // every overlay as part of the Home reset and would wipe the card the instant it appeared.
+        takePendingLimit()
     }
 
     override fun onStart() {
@@ -1088,6 +1089,8 @@ class MainActivity : ComponentActivity() {
             ContextCompat.registerReceiver(this, minuteReceiver, IntentFilter(Intent.ACTION_TIME_TICK), ContextCompat.RECEIVER_NOT_EXPORTED)
             minuteReceiverOn = true
         }
+        // A limit the guard asked the system Home for just before this: show its gate now.
+        takePendingLimit()
         KidsWatch.homeInFront = true
         Weather.whileShown(true)
         idleHandler.removeCallbacks(endHomeBounce)
@@ -1182,6 +1185,16 @@ class MainActivity : ComponentActivity() {
         val reason = runCatching { ScreenTime.Reason.valueOf(intent.getStringExtra(EXTRA_LIMIT_REASON) ?: "") }
             .getOrDefault(ScreenTime.Reason.GroupLimit)
         return Overlay.TimeLimit(pkg, reason, intent.getStringExtra(EXTRA_LIMIT_GROUP))
+    }
+
+    /**
+     * The gate for a limit the guard pulled Aerial home for. That pull-back is the system's own
+     * Home action (a background start from this process is dropped in silence on Android 10,
+     * Sony KD-65X9500H, 2026-11-07), and a Home press cannot carry the extras that [limitFrom]
+     * reads, so the block was parked in ScreenTime for this moment instead.
+     */
+    private fun takePendingLimit() {
+        ScreenTime.takePendingBlock()?.let { vm.overlay = Overlay.TimeLimit(it.pkg, it.reason, it.groupId) }
     }
 
     /** Opens an app, growing it out of its tile. */
