@@ -10,3 +10,5 @@
 这台能用的两条通道：系统 Home 动作（无障碍 `performGlobalAction(GLOBAL_ACTION_HOME)`，Aerial 是默认 HOME，主页键 2 秒回桌面一直有效）；以及「刚有用户交互」后的 BAL 宽限期——之前真机验证「到点拉回」成功过，都是恰好落在宽限窗里，掩盖了问题。
 
 1.86.3（121）起，到点拉回走 `HomeGuardService.pressHomeForLimit()`（系统 Home 动作）；Home 带不了 extras，拦截卡暂存在 `ScreenTime.pendingBlock`（15 秒新鲜度），Aerial 回前台在 `onNewIntent` 的 `onHomePressed` 之后取走弹卡（放前面会被 Home 复位的 `overlay = None` 当帧抹掉）。真机验证：撤销加时后重起被限 App，1 秒内回桌面 + 弹卡。
+
+这台还有一取证死角：Aerial 的 logcat 行与 `aerial-diag.log` 都拿不到，现场只看 `stime_dump`、`dumpsys usagestats` 和后台事件日志。
