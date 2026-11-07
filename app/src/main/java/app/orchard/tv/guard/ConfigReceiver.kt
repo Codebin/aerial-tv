@@ -54,11 +54,26 @@ import kotlinx.coroutines.launch
  *                                   day tallies, per-policy decision values — written to
  *                                   Android/data/app.orchard.tv/files/stime_dump.txt for adb pull,
  *                                   and to logcat; debug only, changes nothing; see ScreenTime)
+ *   ... --es stime_lock force [--es stime_lock_policy <pid>]
+ *                                   (the fallback lock of FALLBACK-DESIGN §4: the backend's guard
+ *                                   saw a strategy pass its expected end without this TV reporting
+ *                                   it ended, and adb-pops the gate here — ScreenTime.
+ *                                   forceLockFromBackend parks a Fallback block, presses Home and
+ *                                   sends the fallback_ack event; stime_lock_policy only names the
+ *                                   policy in the ack)
  * The manifest requires the sender to hold WRITE_SECURE_SETTINGS, which the ADB shell has and
  * ordinary apps cannot get, so no other app on the TV can flip these.
  */
 class ConfigReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
+        // ... --es stime_lock force   (the fallback lock; see the class comment and §4)
+        intent.getStringExtra("stime_lock")?.let { mode ->
+            // Runs on the receiver's thread, the main thread, which is where ScreenTime keeps the
+            // pending block. The ack goes out on ScreenTime's own scope; one Home press, no wait.
+            ScreenTime.forceLockFromBackend(intent.getStringExtra("stime_lock_policy"))
+            resultData = "stime_lock=$mode accepted"
+            return
+        }
         // ... --es pill_preview <text|off>   (see the class comment; nothing is saved)
         intent.getStringExtra("pill_preview")?.let { text ->
             ScreenTimeOverlay.showPreview(context, text.takeUnless { it == "off" })

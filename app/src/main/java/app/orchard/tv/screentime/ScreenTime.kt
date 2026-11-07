@@ -236,9 +236,11 @@ object ScreenTime {
     /**
      * Why the TV refuses a package. Shown by the dialog the viewer gets instead of the app.
      * [DayLock] is the parent's whole-day lock (POLICY-DESIGN §10): the press disables the whole
-     * day and the lock lifts on its own at the midnight stamped into `dayLockUntil`.
+     * day and the lock lifts on its own at the midnight stamped into `dayLockUntil`. [Fallback]
+     * is the backend's last resort (FALLBACK-DESIGN §4): the tv-manager saw a strategy pass its
+     * expected end without this TV ever reporting it ended, and popped the lock over adb.
      */
-    enum class Reason { Blocked, Window, GroupLimit, TvLimit, DayLock }
+    enum class Reason { Blocked, Window, GroupLimit, TvLimit, DayLock, Fallback }
 
     data class Block(val pkg: String, val groupId: String?, val reason: Reason, val leftMs: Long = 0)
 
@@ -473,31 +475,22 @@ object ScreenTime {
         exceptionLeft(r, gid, at.nowMs)?.let { return Status(pkg, Kind.Passed, gid, name, it) }
         if (group.optBoolean("blocked")) return Status(pkg, Kind.Blocked, gid, name, 0)
 
-        // Time policies (POLICY-DESIGN §1: windows [] = allowed all day, nothing to say here).
-        // The first one whose windows do not cover "now" stops the app and counts down to the next
-        // window opening; when they all do, the earliest window end is a countdown candidate.
-        var windowLeft: Long? = null
-        for (p in enabledPolicies(r, "time")) {
-            if (!policyApplies(p, gid)) continue
-            val state = windowState(p.optJSONObject("config"), at) ?: continue
-            if (!state.open) {
-                return Status(pkg, Kind.Window, gid, name, state.leftMs, blockedNow = true)
-            }
-            if (windowLeft == null || state.leftMs < windowLeft) windowLeft = state.leftMs
+        // Every quota/time policy touching this group, each with its own countdown (the same walk
+        // FALLBACK-DESIGN's heartbeat reads, so the two can never disagree about what governs).
+        val beats = walkPolicies(r, gid, membersOf(group), at, usedGroup, usedTotal)
+        // A time policy whose windows do not cover "now" stops the app outright and counts up to
+        // the next opening; first match wins, as the verdict does.
+        beats.firstOrNull { it.waiting }?.let {
+            return Status(pkg, Kind.Window, gid, name, it.leftMs, blockedNow = true)
         }
-
-        // Quota policies: one bound to this group measures the group's day, one bound to no group
-        // (groups []) the whole TV's. Used up, the group one answers first, as in the verdict.
+        var windowLeft: Long? = null
         var groupLeft: Long? = null
         var tvLeft: Long? = null
-        val members = membersOf(group)
-        for (p in enabledPolicies(r, "quota")) {
-            if (!policyApplies(p, gid)) continue
-            val limit = quotaLimitMs(p, at) ?: continue
-            val wholeTv = quotaIsWholeTv(p)
-            val left = if (wholeTv) limit - usedTotal() else limit - usedGroup(members)
-            if (wholeTv) { if (tvLeft == null || left < tvLeft) tvLeft = left }
-            else if (groupLeft == null || left < groupLeft) groupLeft = left
+        for (b in beats) when (b.kind) {
+            Kind.Window -> if (windowLeft == null || b.leftMs < windowLeft) windowLeft = b.leftMs
+            Kind.GroupLimit -> if (groupLeft == null || b.leftMs < groupLeft) groupLeft = b.leftMs
+            Kind.TvLimit -> if (tvLeft == null || b.leftMs < tvLeft) tvLeft = b.leftMs
+            else -> Unit
         }
 
         return when {
@@ -512,6 +505,125 @@ object ScreenTime {
                 tightest?.let { Status(pkg, it.first, gid, name, it.second) }
             }
         }
+    }
+
+    // ------------------------------------------------- per-policy counts (FALLBACK-DESIGN §1 / §2)
+
+    /**
+     * One policy's own countdown over a package, judged at one moment. [statusOf] folds these
+     * into the single answer the pill shows; the fallback heartbeat and the strategy_end events
+     * need every one of them, because the backend guards each strategy separately
+     * (FALLBACK-DESIGN §1: "为当时该前台包所有活动策略各发一条"). A used-up quota carries a
+     * negative [leftMs] on purpose: the expected end is then a passing instant the backend's
+     * guard will cross in any minute, which is exactly a TV that should have stopped and did not.
+     */
+    internal data class Beat(
+        val policyId: String,
+        val kind: Kind,
+        val leftMs: Long,
+        /**
+         * A time policy whose windows do not cover the moment: [leftMs] counts **up** to the next
+         * opening, it is not a countdown to a stop. Such a beat explains a block (and belongs to
+         * strategy_end, §2), but never rides the usage heartbeat — §1's expectedEndMs means the
+         * instant the current window closes, and there is no open window to close.
+         */
+        val waiting: Boolean,
+    )
+
+    /** The enabled quota/time policies touching [gid] at [at], each as its own [Beat]. */
+    private fun walkPolicies(
+        rules: JSONObject,
+        gid: String,
+        members: List<String>,
+        at: Moment,
+        usedGroup: (List<String>) -> Long,
+        usedTotal: () -> Long,
+    ): List<Beat> {
+        val out = ArrayList<Beat>()
+        for (p in enabledPolicies(rules, "time")) {
+            if (!policyApplies(p, gid)) continue
+            val state = windowState(p.optJSONObject("config"), at) ?: continue
+            out.add(Beat(p.optString("id"), Kind.Window, state.leftMs, waiting = !state.open))
+        }
+        for (p in enabledPolicies(rules, "quota")) {
+            if (!policyApplies(p, gid)) continue
+            val limit = quotaLimitMs(p, at) ?: continue
+            val wholeTv = quotaIsWholeTv(p)
+            val left = if (wholeTv) limit - usedTotal() else limit - usedGroup(members)
+            out.add(Beat(p.optString("id"), if (wholeTv) Kind.TvLimit else Kind.GroupLimit, left, waiting = false))
+        }
+        return out
+    }
+
+    /**
+     * Every quota/time policy governing [pkg] right now, each with its own countdown. Null when
+     * none does: an app in no group, or one taken over by a day lock, an exception or a blocked
+     * group — none of which is a strategy counting down to zero, so none of which belongs in the
+     * fallback's records (§1: "DayLock、例外（Passed）不是「等待归零」的倒计时，不进 activeStrategies").
+     */
+    internal fun governingOf(
+        rules: JSONObject?,
+        pkg: String,
+        at: Moment,
+        usedGroup: (List<String>) -> Long,
+        usedTotal: () -> Long,
+    ): Pair<String, List<Beat>>? {
+        val r = rules ?: return null
+        val group = groupOf(r, pkg) ?: return null
+        val gid = group.optString("id")
+        if (r.optLong("dayLockUntil", 0L) > at.nowMs) return null
+        if (exceptionLeft(r, gid, at.nowMs) != null) return null
+        if (group.optBoolean("blocked")) return null
+        val beats = walkPolicies(r, gid, membersOf(group), at, usedGroup, usedTotal)
+        return if (beats.isEmpty()) null else gid to beats
+    }
+
+    /**
+     * One entry of the usage heartbeat's `activeStrategies` array (FALLBACK-DESIGN §1): this TV's
+     * wall-clock `expectedEndMs` is the instant the policy is expected to reach zero — a quota
+     * recomputed every beat as now + leftMs (the count slides with the viewing), a time policy as
+     * the absolute instant its open window closes. The backend's 90 s grace absorbs clock skew.
+     */
+    internal data class ActiveStrategy(
+        val id: String,
+        /** Wire names, §1: "quota" | "time". */
+        val kind: String,
+        val gid: String,
+        val pkg: String,
+        val expectedEndMs: Long,
+    ) {
+        fun toJson(): JSONObject = JSONObject()
+            .put("id", id).put("kind", kind).put("gid", gid).put("pkg", pkg)
+            .put("expectedEndMs", expectedEndMs)
+    }
+
+    /** The heartbeat's list for [pkg]: the beats of [governingOf] that count **down** to a stop. */
+    internal fun activeStrategiesOf(
+        rules: JSONObject?,
+        pkg: String,
+        at: Moment,
+        usedGroup: (List<String>) -> Long,
+        usedTotal: () -> Long,
+    ): List<ActiveStrategy> {
+        val (gid, beats) = governingOf(rules, pkg, at, usedGroup, usedTotal) ?: return emptyList()
+        return beats.filterNot { it.waiting }.map {
+            ActiveStrategy(
+                it.policyId,
+                if (it.kind == Kind.Window) "time" else "quota",
+                gid, pkg, at.nowMs + it.leftMs,
+            )
+        }
+    }
+
+    /** The heartbeat's list for the app in front, judged now. Runs on the main thread. */
+    private fun activeStrategiesNow(pkg: String): List<ActiveStrategy> {
+        val now = CalendarBits.now()
+        return activeStrategiesOf(
+            rules, pkg,
+            Moment(now.hour, now.minute, now.dayOfWeek, System.currentTimeMillis()),
+            usedGroup = { members -> usedFor(members) },
+            usedTotal = { usedTotal() },
+        )
     }
 
     fun status(pkg: String): Status? {
@@ -818,7 +930,52 @@ object ScreenTime {
         if (key == limitNotified) return
         limitNotified = key
         reportBlock(block)                     // the parent sees it in the event log
+        // FALLBACK-DESIGN §2: this very instant — the block decided, the pull-back and the gate
+        // under way — is when the backend's guard needs the word. Every policy governing the
+        // package reports, not just the tightest `statusOf` shows, because the backend watches
+        // each strategy separately and one missed beat must not read as a lock that never came.
+        reportStrategyEnds(block)
     }
+
+    /**
+     * The strategies that governed [b]'s package at the moment it stopped (FALLBACK-DESIGN §2's
+     * enumeration). Waiting time policies are included here even though the heartbeat leaves them
+     * out: the app is being stopped right now, and the policy that closed is one of the reasons.
+     * Runs on the main thread, from [watchForLimit].
+     */
+    private fun governingBeatsNow(pkg: String): List<Beat> {
+        val now = CalendarBits.now()
+        val (_, beats) = governingOf(
+            rules, pkg,
+            Moment(now.hour, now.minute, now.dayOfWeek, System.currentTimeMillis()),
+            usedGroup = { members -> usedFor(members) },
+            usedTotal = { usedTotal() },
+        ) ?: return emptyList()
+        return beats
+    }
+
+    /** One `kind=strategy_end` event per governing strategy, §2: each with its own policyId. */
+    private fun reportStrategyEnds(b: Block) {
+        if (!enabled || secret.isEmpty()) return
+        for (event in strategyEndEvents(b.pkg, b.reason, governingBeatsNow(b.pkg))) scope.launch(Dispatchers.IO) {
+            request(
+                "/api/tv/event", event.put("device", deviceId).put("secret", secret)
+            )
+        }
+    }
+
+    /**
+     * The §2 event bodies for one block: one per policy governing the package at that moment,
+     * `text` naming the Reason so the page reads *why* the lock landed. The set comes from
+     * [governingOf], which is what makes "全发才不遗漏" hold: every strategy this package was
+     * under reports, not just the one [statusOf] would have shown as tightest.
+     */
+    internal fun strategyEndEvents(pkg: String, reason: Reason, beats: List<Beat>): List<JSONObject> =
+        beats.map {
+            JSONObject()
+                .put("kind", "strategy_end").put("policyId", it.policyId)
+                .put("pkg", pkg).put("text", reason.name)
+        }
 
     private suspend fun enrol() = withContext(Dispatchers.IO) {
         val body = JSONObject()
@@ -845,13 +1002,27 @@ object ScreenTime {
         }
     }
 
+    /**
+     * Whether the last usage heartbeat carried a non-empty `activeStrategies` (FALLBACK-DESIGN §1).
+     * An empty array is the message that clears the backend's guard records, so the heartbeat that
+     * drops the last countdown must get out even from an otherwise-silent idle TV — this is what
+     * keeps the "nothing to report" shortcut from swallowing it.
+     */
+    @Volatile private var strategiesOutstanding = false
+
     private suspend fun push() {
         // Snapshot the main-thread fields here, before leaving the main thread.
         val batch: List<JSONObject> = synchronized(pending) { ArrayList(pending) }
         val front = frontPkg
         val since = if (front != null) wallStart(SystemClock.elapsedRealtime(), frontSince) else 0L
-        // A TV that nobody is watching still has to say what version it runs, once per version.
-        if (batch.isEmpty() && front == null && lastReportedCode == BuildConfig.VERSION_CODE.toLong()) return
+        // The per-strategy heartbeat (FALLBACK-DESIGN §1): what the app in front is counting down
+        // to, policy by policy. An empty array is a statement, not an omission — the backend clears
+        // its records for this device on seeing one (§1: "空数组＝当前无活动策略").
+        val strategies = if (front != null) activeStrategiesNow(front) else emptyList()
+        // A TV that nobody is watching still has to say what version it runs, once per version;
+        // and one that just lost its last countdown has to send the empty array that clears it.
+        if (batch.isEmpty() && front == null && !strategiesOutstanding &&
+            lastReportedCode == BuildConfig.VERSION_CODE.toLong()) return
         val body = JSONObject()
             .put("device", deviceId)
             .put("secret", secret)
@@ -861,6 +1032,7 @@ object ScreenTime {
                 if (front != null) JSONObject().put("pkg", front).put("since", since)
                 else JSONObject().put("pkg", JSONObject.NULL),
             )
+            .put("activeStrategies", JSONArray(strategies.map { it.toJson() }))
             .put("appVersion", BuildConfig.VERSION_NAME)
             .put("versionCode", BuildConfig.VERSION_CODE)
             .put("flavor", BuildConfig.FLAVOR)
@@ -869,6 +1041,8 @@ object ScreenTime {
             code == 200 -> {
                 synchronized(pending) { pending.removeAll(batch.toSet()) }
                 lastReportedCode = BuildConfig.VERSION_CODE.toLong()
+                // The backend has the array now; only the next one going empty owes a clearing beat.
+                strategiesOutstanding = strategies.isNotEmpty()
                 persist()
                 // Deliberately NOT taking the reply's rulesVersion: a usage reply carries the number
                 // but not the rules themselves, so treating it as "rules up to date" left the cache
@@ -1081,6 +1255,37 @@ object ScreenTime {
                     .put("device", deviceId).put("secret", secret)
                     .put("kind", "blocked").put("pkg", b.pkg).put("groupId", b.groupId ?: JSONObject.NULL)
                     .put("text", b.reason.name)
+            )
+        }
+    }
+
+    /**
+     * The backend's last resort (FALLBACK-DESIGN §4): a strategy passed its expected end and this
+     * TV never sent the strategy_end, so its guard adb-broadcasts `stime_lock force` and we land
+     * here. The viewer gets the same treatment as an ordinary overrun — the gate parked in
+     * [pendingBlock] and the system Home press that brings Aerial back (the same path §4 insists
+     * on: a background activity start from this process is dropped in silence, a Home press is
+     * not), falling back to [onBlocked] only where no guard is bound. One pop, no day lock: the
+     * TV's own judging takes over again afterwards, as the owner decided (设计取舍: 只弹一次锁).
+     *
+     * Runs on the main thread, from the broadcast receiver, which is where [frontPkg] and
+     * [pendingBlock] live. The ack is the loop the page shows: kind=fallback_ack with the policyId
+     * the backend locked for, so a silent drop (no such build, not enrolled) stays visible there.
+     */
+    fun forceLockFromBackend(policyId: String?) {
+        val pkg = pendingBlock?.pkg ?: frontPkg ?: BuildConfig.APPLICATION_ID
+        val block = Block(pkg, null, Reason.Fallback)
+        pendingBlock = block
+        pendingBlockAt = SystemClock.elapsedRealtime()
+        if (!HomeGuardService.pressHomeForLimit()) onBlocked?.invoke(block)
+        Log.i(TAG, "fallback lock popped (policy=$policyId, pkg=$pkg)")
+        if (!enabled || secret.isEmpty()) return
+        scope.launch(Dispatchers.IO) {
+            request(
+                "/api/tv/event", JSONObject()
+                    .put("device", deviceId).put("secret", secret)
+                    .put("kind", "fallback_ack")
+                    .put("policyId", policyId ?: JSONObject.NULL)
             )
         }
     }

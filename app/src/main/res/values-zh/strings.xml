@@ -225,6 +225,7 @@
     <string name="st_gate_reason_group">这一类 App 今天的时间用完了。</string>
     <string name="st_gate_reason_tv">今天看电视的时间用完了。</string>
     <string name="st_gate_reason_daylock">今天这台电视已被禁用。</string>
+    <string name="st_gate_reason_fallback">管理台检测到超时观看，已锁定。</string>
     <string name="st_gate_add_hint">想多看点？选个时长，再输家长密码</string>
     <string name="st_gate_add_15">+15 分钟</string>
     <string name="st_gate_add_30">+30 分钟</string>

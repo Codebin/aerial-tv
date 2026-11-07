@@ -142,6 +142,10 @@ private fun reasonText(reason: ScreenTime.Reason): Int = when (reason) {
     // so nothing here depends on leftMs; the PIN buttons still work — the parent's PIN on the TV
     // remains the parent's say-so.
     ScreenTime.Reason.DayLock -> R.string.st_gate_reason_daylock
+    // The backend's fallback lock (FALLBACK-DESIGN §4): the TV's own stop did not reach the
+    // viewer, so the parent console popped this one. Extra minutes still work — the PIN on the
+    // TV remains the parent's say-so, fallback lock included.
+    ScreenTime.Reason.Fallback -> R.string.st_gate_reason_fallback
 }
 
 /** The app's name as this household sees it: a rename wins, then the app's own label. */
