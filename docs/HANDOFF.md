@@ -88,7 +88,16 @@
 
 ## 现状（2026-11-08，本机）
 
-- **1.88.1（versionCode 124）：同步官网主线 1.88 + 本户「策略心跳双向校验 + 管理台 adb 弹锁」首发**。本户 21 个提交整包变基到官方 tag `v1.88`（d4727f0，官网 1.88=123、Lite 1.22=24）。
+- **1.88.1（versionCode 124）已发布并双校验通过（2026-11-08 晚，本机）**：主人要求同步主线 1.88、推 gogs、验证电视和后台的双校验。
+  - **发布**：`publish-apk.sh` 登记 `rel-124s`/`rel-124g`（guard 只登记），`release/enable` + 立刻 `release/forced`；两个包 dex 里 192.168.3.3 命中 3 处。**Sony KD-65X9500H**：offer 到、下载 200 全量、自动交给安装器，但 Android 10 安装页停住等人，18:19 `backed_out`（`KEY_AUTO_TRIED` 同构建只送安装器一次，不重试）→ 按保底 `BUILD=1 KEEP_ADB=1 TV=$SONY_TV tools/install.sh` 装成 **124**（备份 121 在 `local/backups/`；编译档 speed，系统后台编的）。**Samsung SM-G998B（BlueStacks）**：启动即收 offer，18:27:40 全无人值守 `handed→installed` 装成 **124**。`postcheck.sh 124` 过（两台都带 124 心跳回来）。**下次发版 ≥ 125。**
+  - **gogs**：变基历史 force push，main=cd1a7b6（1.88 基线 + 22 个本户提交）。
+  - **NAS 后台已部署**（主人批准）：`deploy_adb_keys.sh` 推 adbkey（md5 过）+ `publish.sh` 起带 adb 的新镜像。**两个部署坑当场修掉**：① gw 600s 超时打断首次 build，重跑吃缓存；② **`ADB_VENDOR_KEYS` 必须指到 key 文件**（`/data/adbkey/adbkey`）——上一轮 compose 写了目录 `/data/adbkey`，adb 不认目录里的 `adbkey` 名字，电视回 unauthorized（compose 已改并 `docker compose up -d api`，容器 `adb devices` 两台电视都是 `device`）。
+  - **双校验端到端（BlueStacks 三星 + 索尼真机）**：真策略演练（新建分组/2 分钟限额绑 `com.diyp.tv`（三星）、`g11f97b`（索尼 mytv 专属组），测完按记录的 id 删干净）——电视端命中策略的心跳确实带 `activeStrategies`（守护拿到记录才判定得动）；到点电视自锁、`blocked` + **每策略一条 `strategy_end`** 回来（索尼 18:42、18:48、18:49 多轮）；守护 15 秒轮确实开枪：18:34:54（三星）、18:42:39（索尼）自动执行 adb 弹锁（当时卡 key 记 `adb unreachable` 中文事件——正是设计的兜底分支）；电视端兜底真机走通：`stime_lock force` accepted → 锁定卡拉回桌面 → **`fallback_ack` 18:46:16 回后台闭环**。
+  - **查出的竞态 bug（未修，下轮定夺）**：`strategy_end` 处理后，**同轮滞后的 usage 心跳**（前台拉回前那拍，带 `expectedEndMs` 已过期的条目）会把该策略记录**重建并把 `since` 刷新成比 ended 更新** → 守护 90 秒宽限后把「刚正常自锁」的策略误判漏锁再弹一次（18:42:39 那次就是这个；冷却 5 分钟还会再补弹，正常到点的电视会被骚扰）。修法（一行判断，改 `server.py` + `test_api.py` 补用例）：`fallback_due` 里再豁免「`ended[pid] >= rec["expectedEndMs"] - GRACE_MS`」——end 落在归零时刻前后宽限内就算本轮结束，迟到的重拍不再定罪。真「模块静默死」场景不受影响（那种没有 end，本来就该弹）。
+  - **残留**：BlueStacks 的 5555 被 macOS 防火墙挡住外部直连（守护对三星弹锁会 `adb unreachable`，属预期兜底记录）；演练期间给三星 `com.diyp.tv` 挪出过分组，分组删除后它回到未分组（本来就是测试机上的测试 App，无原分组可回）。
+
+**变基明细**（本户 21 个提交整包变基到官方 tag `v1.88`，d4727f0，官网 1.88=123、Lite 1.22=24）：
+
   - **号**：`versionName = "1.88.1"`（主线 1.88 + 本户第三段），`versionCode = 124`——官网 1.88 用掉 123（1.88 巡检段还提过 TCL 装过 122 测试包），按「取比官网已用号段更大」取 124。本户库里上一个号 121。下次发版 **≥ 125**。
   - **上游 1.87/1.88 增量**（v1.86..v1.88 共 40 个提交）：1.87 段——#1354 TCL 长按主页开任务中心、#1326 同步复活重绑卡住的守护、#1347/#1342 坚果/MStar 信号源、#808 老 VIDAA 智汇键、#1337 Amlogic pre-mute 音量复位、#1355 索尼当贝亮度、两台 device profile、襄樊→襄阳；1.88 段——#1229 三连环（BootOpen 落盘改 commit、onResume 1 秒窗、唤醒后 15 秒重开开机目标）、PR #1373 坚果 boot_id（同修 #1283 对时跳钟）、PR #1372 海信激光真亮度、PR #1248 创维 Tianci 背光、#1367 城市库、「我的视频」屏保接力 + 竖拍裁切、PR #1366 合入（MFTR0 实测过）。上游**没碰**屏幕时间、升级链路、ConfigReceiver、安装脚本、五语 strings——本户改动全数无冲突叠上。
   - **变基冲突**：`app/build.gradle.kts`（号，直接落 124/1.88.1）、`docs/HANDOFF.md` 三段（上游 11-07/11-08/发布段与本户各段都保留）、两个汉化提交与上游 42 个改动文件的交集（14+3 个文件 35 块：规则=代码取上游、注释取汉化侧现成译文、上游新增注释现译；site/en/agent.md 与 README.en.md 的上游新行按中文版 README/agent.md 的译文补进镜像）。合并点机器核过：`ScreenTime.init/attach/detach/onForeground`、`takePendingBlock`、`reportBlock`、`stime_lock`、`goHome(gate)` 与上游 `rebindForJmgoKeys/startsOnSignalSource/nudgeVolumeAfterReopen/JUST_OPENED_MS` 全在位，`goHome` 的上游调用点吃 gate 默认值。
