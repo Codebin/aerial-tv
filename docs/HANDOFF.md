@@ -368,6 +368,8 @@
 
 ## 现状（2026-11-08，本机）
 
+- **上游已发 1.89（versionCode 126、Lite 1.23/25，2026-11-09 中午）+ 未发版的 #1416 竖屏壁纸修复；主人看过增量后定「和 Sony/Samsung 关系不大，暂时不跟」（2026-11-09）**——本户**有意停在 1.88.1（124）**，这不是忘了同步。真要跟进 1.89 时：上游用掉 126、其测试包还占着 124/125，本户发 **1.89.1 取 versionCode ≥ 127**；Lite 上游已升 1.23（25）；上游两个已知坑（#1287 `mbx` 误藏亮度条、SourceDropouts 未合）别当本户回归失败。
+
 - **1.88.1（versionCode 124）已发布并双校验通过（2026-11-08 晚，本机）**：主人要求同步主线 1.88、推 gogs、验证电视和后台的双校验。
   - **发布**：`publish-apk.sh` 登记 `rel-124s`/`rel-124g`（guard 只登记），`release/enable` + 立刻 `release/forced`；两个包 dex 里 192.168.3.3 命中 3 处。**Sony KD-65X9500H**：offer 到、下载 200 全量、自动交给安装器，但 Android 10 安装页停住等人，18:19 `backed_out`（`KEY_AUTO_TRIED` 同构建只送安装器一次，不重试）→ 按保底 `BUILD=1 KEEP_ADB=1 TV=$SONY_TV tools/install.sh` 装成 **124**（备份 121 在 `local/backups/`；编译档 speed，系统后台编的）。**Samsung SM-G998B（BlueStacks）**：启动即收 offer，18:27:40 全无人值守 `handed→installed` 装成 **124**。`postcheck.sh 124` 过（两台都带 124 心跳回来）。**下次发版 ≥ 125。**
   - **gogs**：变基历史 force push，main=cd1a7b6（1.88 基线 + 22 个本户提交）。
