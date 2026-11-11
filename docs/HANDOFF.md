@@ -319,6 +319,16 @@
   - 关闭：用户确认的 #1380 #1386 #1434，README 加行后关 #1453，原则冲突 #1457 #1446，重复 #1458，已知限制 / 固件限制 #1451 #1452 #1361 #1431 #1441，十天以上没回音 20 个（#776 #984 #998 #1006 #1009 #1022 #1026 #1031 #1032 #1034 #1035 #1037 #1041 #1055 #1062 #1064 #1076 #977 #976 #898）。复查又关 #1466（海信 27GX 实测，README 加行）#1455（MFFU0 信号源 profile，不内置）#1421（同 #384）。enhancement：#1465 #1464 #1450 #1421。
   - 之后（同一天）：#706 le5inioo 的 8 张新图收进图标库（c16b16a，官网 208 个 App / 262 张，电视上没装这些 App，只在官网核对）；PR #1315 合入（户主同意），官网首页不加海信标签页，agent.md 要求 Agent 先说明工厂菜单的风险、得到同意（e8e2760），官网已部署。
   - 等户主：PR #1375（米家等 miplay，建议做成机型配置开关）；#1081（TCL 是否给「不过滤按键」选项）；
+## 现状（2026-11-11，本机）
+
+- **1.93.1（versionCode 132）已发布并强制（2026-11-11 早，本机）**：主人要求同步官网主线 1.93、发强制更新、推 gogs。本户 22 个提交整包变基到官方 tag `v1.93`（e25a05d，官网 1.89–1.93 用掉 126/128/129/130/131，测试包还占过 124/125/127；Lite 上游已到 1.27/29，本户 Lite 这轮没改也没发）。
+  - **号**：`versionName = "1.93.1"`、`versionCode = 132`——按「取比官网已用号段更大」。下次发版 **≥ 133**。
+  - **汉化轮结束**：三个汉化提交（b7839b1 全仓注释汉化、3b548e2 英文镜像、72c76f4 1.88 增量补译）**不再带上**——上游 AGENTS.md 从一开始就要求「注释和标识符用英文」，「注释用中文」是本户汉化提交改的；变基后 AGENTS.md 回到上游版（本户加的「跟主线发版的固定顺序」「版本号规则」两段照旧在），往后也不用再补译上游增量。
+  - **变基冲突三处**：`app/build.gradle.kts`（版本号，中间提交一律取上游，最后一个提交落 132/1.93.1）、`MainActivity.kt` 的 `resumeWork`（上游加 `CecSwitch.register` + `minuteReceiver`，本户 `takePendingLimit()` 保留两边）、`docs/HANDOFF.md`（上游 11-09/11-10 各段与本户各段都保留）。合并点机器核过：`ScreenTime.baseUrl/walkPolicies/activeStrategiesOf/pendingBlock/forceLockFromBackend`、`goHome(gate)` 默认值、`pressHomeForLimit`、`bringAerialBack`、`stime_lock`、`TV_MANAGER_URL/TOKEN` buildConfigField 全在位；五语 strings 缺 key 只有各语言都省的 `app_name`、占位符零不一致（上游这次自己维护了五语，图标库等新 key 齐全）；手机页 `index.html` 两侧改动无冲突自动合上。
+  - **上游 1.89–1.93 增量**：1.89——11-09 巡检（#1402 #1369 长按主页、#1401、#1396 #1388 按键表认错主页键、#1399 keep_adb、#1405、#1023、#1267 崩溃、#1386、#1380）+ PR #1393 功能轮次（12 小时制、锁定首页、文件夹移动、CEC 切源、隐藏信号源、#1378 宽带电视）；1.90——11-10 巡检（#1402 拦到抬起、#1383、#1423 红外当手柄、#1419 创维、#1424 TCL 5.1、#1425）+ 竖屏壁纸 #1416 #1255；1.91/1.92/1.93——图标库 v2（#706 多张候选 + 署名）、手机页选图立即显示、更新后重读索引。上游已知坑 #1287（`mbx` 误藏亮度条）照旧。
+  - **验证**：standard + guard release 单测 **650 个 / 0 失败**（跑前照旧断 `local/tv-manager.properties`，构建前已恢复）；两个 release 包构建通过：standard 3,243,677 B（sha256 4125a95a…）、guard 3,245,134 B（cf27390a…），`publish-apk.sh --check` 包名 / 签名 / 三段文件名 / dex 里后端 host+token 门禁全过。**没逐台真机验上游新功能**（家里没小米 / TCL，Sony/Samsung 走不到图标库、CEC 那些路径）。
+  - **发布**：`rel-132s` 登记 + `release/enable` + 立刻 `release/forced`；`rel-132g` 只登记（两台都是 standard）。`postcheck.sh 132` **过**：Samsung SM-G998B（BlueStacks）无人值守装成 132、心跳带新号回来；**Sony KD-65X9500H 发布时离线**，上线自愈——这台有 1.88.1 时 `backed_out` 停机的先例（`KEY_AUTO_TRIED` 同构建只送安装器一次），上线后没见 `installed` 就按保底 `BUILD=1 KEEP_ADB=1 TV=$SONY_TV tools/install.sh`。
+  - **gogs**：变基历史 force push，main = 本轮 HEAD（v1.93 基线 + 23 个本户提交）。
 
 ## 现状（2026-11-10）
 
