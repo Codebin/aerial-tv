@@ -979,7 +979,7 @@ object Updates {
             var tries = 0
             while (true) {
                 try {
-                    fetch(url, part)
+                    fetch(url, part, expect, silent)
                     break
                 } catch (e: Exception) {
                     if (e is kotlin.coroutines.cancellation.CancellationException) throw e
@@ -997,7 +997,7 @@ object Updates {
     }
 
     /** Fetches [url] into [part], from its end when it has bytes already and the server takes a range. */
-    private suspend fun fetch(url: String, part: File) {
+    private suspend fun fetch(url: String, part: File, expect: Long, silent: Boolean) {
         val from = part.length()
         val c = URL(url).openConnection() as HttpURLConnection
         LegacyUpdateTls.configure(appContext, c)
