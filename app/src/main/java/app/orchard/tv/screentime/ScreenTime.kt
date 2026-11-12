@@ -6,9 +6,11 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.SharedPreferences
 import android.os.Build
+import android.os.PowerManager
 import android.os.SystemClock
 import android.provider.Settings
 import android.util.Log
+import androidx.core.content.ContextCompat
 import app.orchard.tv.BuildConfig
 import app.orchard.tv.apps.AppInventory
 import app.orchard.tv.guard.HomeGuardService
@@ -234,6 +236,15 @@ object ScreenTime {
     private val pending = ArrayList<JSONObject>()     // closed sessions waiting for delivery
 
     /**
+     * True while the panel is dark. A TV in standby keeps its last app on the window stack and
+     * fires no further window event, so without this the dark hours are measured as watching:
+     * one settings screen left up overnight racked up 14.5 h on the Sony KD-65X9500H (2026-11-12)
+     * and spent the whole-TV allowance before lunch. Main-thread bookkeeping, like the fields
+     * above; internal so the standby tests can read it.
+     */
+    internal var screenOff = false
+
+    /**
      * Why the TV refuses a package. Shown by the dialog the viewer gets instead of the app.
      * [DayLock] is the parent's whole-day lock (POLICY-DESIGN §10): the press disables the whole
      * day and the lock lifts on its own at the midnight stamped into `dayLockUntil`. [Fallback]
@@ -288,6 +299,7 @@ object ScreenTime {
             restore(p)
             Log.i(TAG, "screen time on: $baseUrl as $deviceId, ${if (secret.isEmpty()) "not enrolled" else "enrolled"}")
             watchPackages(app)
+            watchScreen(app)
             scope.launch { tickLoop() }
         }
     }
@@ -312,6 +324,54 @@ object ScreenTime {
                 context.registerReceiver(packageWatcher, filter)
             }
         }.onFailure { Log.w(TAG, "cannot watch package changes; the sweep still covers it", it) }
+    }
+
+    /**
+     * Starts and stops the clock with the panel. The receiver runs on the main thread, which is
+     * where the session fields above live. Some firmwares cut Aerial off before the screen
+     * broadcasts land (Xiaomi MFTR0 force-stops it 1.3 s after the panel goes dark, 2026-11-08),
+     * so the tick loop also polls the same answer as a safety net.
+     */
+    private fun watchScreen(context: Context) {
+        screenOff = !isInteractive(context)           // a process woken in standby starts paused
+        ContextCompat.registerReceiver(
+            context, screenWatcher,
+            IntentFilter(Intent.ACTION_SCREEN_ON).apply { addAction(Intent.ACTION_SCREEN_OFF) },
+            ContextCompat.RECEIVER_NOT_EXPORTED,
+        )
+    }
+
+    private val screenWatcher = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) = when (intent.action) {
+            Intent.ACTION_SCREEN_OFF -> noteScreenOff()
+            Intent.ACTION_SCREEN_ON -> noteScreenOn()
+            else -> Unit
+        }
+    }
+
+    /** Whether the panel is awake. A TV that cannot say is taken as awake — the old behaviour. */
+    private fun isInteractive(context: Context): Boolean = runCatching {
+        (context.getSystemService(Context.POWER_SERVICE) as? PowerManager)?.isInteractive != false
+    }.getOrDefault(true)
+
+    /**
+     * The panel went dark: settle what was really watched up to this instant, then hold the clock.
+     * The running app stays [frontPkg] — the firmware usually puts that same screen back when the
+     * TV wakes, and waking restarts its stretch from the wake-up anyway.
+     */
+    internal fun noteScreenOff(now: Long = SystemClock.elapsedRealtime()) {
+        if (screenOff) return
+        closeFront(now)
+        screenOff = true
+        persist()
+    }
+
+    /** The panel woke up: the dark stretch belonged to no viewer, so none of it is counted. */
+    internal fun noteScreenOn(now: Long = SystemClock.elapsedRealtime()) {
+        if (!screenOff) return
+        screenOff = false
+        if (frontPkg != null) frontSince = now
+        persist()
     }
 
     /**
@@ -360,6 +420,9 @@ object ScreenTime {
 
     /** Settles the running session without ending it, so a long film shows up while it plays. */
     private fun closeFront(now: Long) {
+        // A dark panel is nobody watching: the stretch before the switch-off was settled when the
+        // screen went out, and anything that moved while it was dark is not company.
+        if (screenOff) return
         val pkg = frontPkg ?: return
         val ms = now - frontSince
         if (ms < 1000) return
@@ -811,7 +874,7 @@ object ScreenTime {
 
         line("todayMs: " + if (todayMs.isEmpty()) "(empty)"
             else todayMs.entries.joinToString(" ") { "${it.key}=${it.value}" })
-        line("usedTotal=${usedTotal()} pending=${pending.size} frontPkg=$frontPkg " +
+        line("usedTotal=${usedTotal()} pending=${pending.size} screenOff=$screenOff frontPkg=$frontPkg " +
             "frontElapsedMs=" + if (frontPkg != null) SystemClock.elapsedRealtime() - frontSince else -1)
 
         val pkg = frontPkg
@@ -870,6 +933,11 @@ object ScreenTime {
             // Close the running session into the day tally so a TV left on all day keeps counting,
             // then push what accumulated. Doing it here keeps the main thread out of the network.
             val near = withContext(Dispatchers.Main) {
+                // The poll is the safety net where a firmware drops a screen broadcast: the
+                // state and the panel must agree before the session is settled, whichever missed.
+                if (isInteractive(app) == screenOff) {
+                    if (screenOff) noteScreenOn() else noteScreenOff()
+                }
                 closeFront(SystemClock.elapsedRealtime())
                 watchForLimit()
                 publishStatus()
