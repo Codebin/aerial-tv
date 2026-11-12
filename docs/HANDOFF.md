@@ -2,6 +2,12 @@
 
 写给接手 Aerial 的人或 AI。先读这份，再读 [ARCHITECTURE.md](ARCHITECTURE.md) 和 [devices/](devices/)。
 
+## 现状（2026-11-12，本机）
+
+- **1.95.1（versionCode 136）已发布并强制（本机）**：主人要求同步官网主线（官网已到 1.95=135，1.94=133、TCL 测试包占过 134，本户取 136），一并带上本户的屏幕时间待机修复。25 个户内提交整段变基到官方 tag `v1.95`，变基丢了 `fetch()` 的 `expect`/`silent` 参数（上游为断点续传 #1480 重写了该函数），补一个提交接回。改号后 standard、guard 单测各 330 个通过（含新增 `ScreenTimeStandbyTest` 3 个）、Lite lint 0 error，两个 release 包签名 e089…，`publish-apk.sh --check` 过（dex 里有后端地址）后登记 rel-136s / rel-136g，页面上启用 + 强制。**postcheck**：Samsung SM-G998B 23:39:52、Sony KD-65X9500H 23:53 先后带 136 心跳回来（Sony 是待机中把 forced installer 装完的，脚本第一轮的 FAIL 只是没等到它）——两台在线、管控在，发布闭环。
+- **待机虚计修复（`ScreenTime`，主人 2026-11-12 定）**：电视按待机键后系统不再派发窗口事件，`frontPkg` 挂在最后一个画面上，tickLoop 每 30 秒继续结算——Sony 上系统设置画面挂一宿记了 14.6 小时，把整机 240 分额度一上午吃光，直播（不限时组）和所有分组 App 都被整机额度误杀（孩子说「没看直播却每天没时间」由此而来）。现在注册 `SCREEN_ON/SCREEN_OFF`（照 `MainActivity` 的写法，`ContextCompat` + `RECEIVER_NOT_EXPORTED`），息屏先 `closeFront` 结算观看段再挂表，亮屏把 `frontSince` 重挂到唤醒点；tickLoop 每轮比对 `isInteractive`，照顾待机前强停 Aerial 收不到广播的固件（小米 MFTR0 先例）。`stime_dump` 加打 `screenOff=`。**Sony KD-65X9500H 实机验证**：电源键待机 → dump `screenOff=true`、`usedTotal` 一毫秒不涨；唤醒 → `screenOff=false`，整段待机零虚计。整夜挂机观察随 136 上线补看。
+  - 顺带：本日从 NAS usage 文件核对出 11-05～11-10 每天 1.8～5 小时的直播观看真实存在（挂在不限时组、不占 15 分视频额度）；管理台 PIN 已非 README 默认值，脚本代发写操作要用 `local/tv-manager.env` 的 `TV_MANAGER_PIN` 走 `/api/stime/unlock`。
+
 ## 现状（2026-11-27）
 
 - **2026-11-27 全量巡检**（记录 `local/triage/2026-11-27-full.md`，回复 `replies-2026-11-27.py` / `-27b.py`，发出 `posted-2026-11-27.txt`，34 条）：327 issue / 71 PR，新 issue 13 个、有新回复 15 个，逐个读过（含 #1712 三张截图、#1693 的 skyresource.zip）。关了 11 个 issue：#1784 重复，#1790 当贝白名单壳和原则冲突、不进机型表，#1794 海信 85E7H 进机型表，8 个十天没回音（#1558 #1582 #1570 #1559 #1560 #1565 #1566 #1574）。复查（`raw-2026-11-27b`）只多了 #1796，已回复。改动（每个一个提交，**main 上，未发版**，已推送）：
