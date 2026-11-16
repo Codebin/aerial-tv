@@ -2,6 +2,16 @@
 
 写给接手 Aerial 的人或 AI。先读这份，再读 [ARCHITECTURE.md](ARCHITECTURE.md) 和 [devices/](devices/)。
 
+## 现状（2026-11-16，本机）
+
+- **1.98.1（versionCode 145）已登记、启用并强制（本机）**：主人要求跟主线升到最新（官网已到 1.98=144；1.96=137、1.97=142，其间 138–141、143 被官网测试包占过）。28 个户内提交整段变基到官方 tag `v1.98`（`git rebase --onto v1.98 v1.95`），三处冲突：`app/build.gradle.kts` 两处版本号（中间提交一律取上游，号在最后一个提交落）和 `docs/HANDOFF.md`（官网 11-13/11-14/11-15 三段与本户 11-12 两段都留，本户段在最上）。
+  - **号**：`versionName = "1.98.1"`、`versionCode = 145`——官网已用到 144，按「取比官网已用号段更大」。本户库里上一个号 136。下次发版 **≥ 146**。
+  - **变基后机器核过**：本户相对上游的净差异（`MainActivity` / `HomeGuardService` / `HomeViewModel` / `ControlCenter` / `AndroidManifest` / `ScreenTime` 六个重叠文件）变基前后逐行一致——新增 1130 行、删除 13 行一个不差；手机页 `index.html` 与变基前一字不差。合并点符号全在位：`ScreenTime.baseUrl/walkPolicies/activeStrategiesOf/pendingBlock/forceLockFromBackend`、`goHome`、`pressHomeForLimit`、`bringAerialBack`、`stime_lock`、`SCREEN_OFF`/`isInteractive` 待机修复、`Updates.download/fetch` 的 `expect`/`silent`（断点续传重写后接回的 size check 与静默预取）、`TV_MANAGER_URL`/`TOKEN` buildConfigField。五语 strings 缺 key 只有各语言都省的 `app_name`，占位符零不一致。
+  - **这轮带来的上游内容**：1.96——#1499 #1498 音量键按下抬起、#1505 #1502 海信 Jamdeo 浮层、#1388 设置候选要 `startable()`、#1491「有意打开原桌面」记盘、Lite #1388；1.97——#1521 音量抬起按固件记盘、#1508 无 action 的主页键、#1463 #1525 厂商多任务 Activity、#1528 #1527 #1517 #1506、PR #1523 极米选择框、PR #1534 无障碍列表补回；1.98——#1537 唤醒后的 keep_adb、#1497 当贝 `STR_SHUTDOWN` 前退场、#1394 华为 `tvsetting://`、#1477 #1483 #1487 信号源、#1544 升级后回到安装器、#1525 #1538 #1548、PR #1551 TCL Google TV 亮度、PR #1541 活动切换的一秒间隙。**Lite 本轮本户没改**，跟上游到 1.30（32）。
+  - **验证**：standard、guard release 单测各 333 个 / 0 失败（跑前照旧把 `local/tv-manager.properties` 改名断开，构建 release 前已恢复）；`:lite:lintRelease` 通过；两个包 `publish-apk.sh --no-build --check` 过（包名 / 签名 / 三段文件名 / dex 里后端 host+token 全在；Signer #1 证书 SHA-256 `1404db7e…`，和本机 `local/signing.properties` + `local/aerial.keystore`（10-29 起没换过，124 / 132 / 136 都是它签的、都覆盖升级成功）一致，覆盖安装不会撞签名）：standard 3,252,367 B（sha256 f2a70dd2…）、guard 3,252,245 B（c82d772f…）。**没逐台真机验上游新功能**（家里只有 Sony / 三星，走不到当贝、极米、华为那些机型路径）。
+  - **发布**：`rel-145s` 登记 + `release/enable` + 立刻 `release/forced`；`rel-145g` 只登记未启用（两台都是 standard）。**顺带**：查版本库发现 `rel-136g`（guard 1.95.1）从 11-12 那轮起一直挂着 enabled+forced——正是 11-08 记下的那个坑（guard 通道挂着启用版，探针 / 任何 guard 电视一注册就被它 offer），这轮 `release/disable` 停掉了；**每轮发版后要回查一遍 `GET /api/stime/releases`，确认只有 standard 那一条是 enabled**。`postcheck.sh 145`：两台都**离线**（最后心跳 11-16 08:14 前后，都在待机），脚本按设计判 OK 并列出「上线自愈」——**下次主人开机后要看它们带 145 心跳回来**；没见 `installed` 就按保底 `BUILD=1 KEEP_ADB=1 TV=$SONY_TV tools/install.sh`（Sony 有 1.88.1 时 `backed_out` 停机的先例）。
+  - 顺带：后台事件里 Sony 的整机策略 `p69e511`（240 分）今天已用超（直播 `com.github.mytv.android` 挂在不限时组，从 06:59 起连续），到点后电视自锁报 `strategy_end`，后台的 adb 保底因电视离线（`adb connect 192.168.3.101:5555` 超时）记了一系列 `fallback` 失败——离线期间的预期兜底，不是这次的改动。
+
 ## 现状（2026-11-12，本机）
 
 - **1.95.1（versionCode 136）已发布并强制（本机）**：主人要求同步官网主线（官网已到 1.95=135，1.94=133、TCL 测试包占过 134，本户取 136），一并带上本户的屏幕时间待机修复。25 个户内提交整段变基到官方 tag `v1.95`，变基丢了 `fetch()` 的 `expect`/`silent` 参数（上游为断点续传 #1480 重写了该函数），补一个提交接回。改号后 standard、guard 单测各 330 个通过（含新增 `ScreenTimeStandbyTest` 3 个）、Lite lint 0 error，两个 release 包签名 e089…，`publish-apk.sh --check` 过（dex 里有后端地址）后登记 rel-136s / rel-136g，页面上启用 + 强制。**postcheck**：Samsung SM-G998B 23:39:52、Sony KD-65X9500H 23:53 先后带 136 心跳回来（Sony 是待机中把 forced installer 装完的，脚本第一轮的 FAIL 只是没等到它）——两台在线、管控在，发布闭环。
