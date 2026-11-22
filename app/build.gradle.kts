@@ -1,4 +1,5 @@
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import java.net.URI
 import java.util.Properties
 import java.util.zip.ZipEntry
 import java.util.zip.ZipFile
@@ -9,6 +10,51 @@ plugins {
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
 }
+
+// Where this household's tv-manager runs. Read from local/tv-manager.properties so the owner's
+// LAN address and enrolment token stay out of version control (see AGENTS.md: never commit local/).
+// A clone without that file still builds: the screen-time feature compiles to "no backend set".
+val tvProps = Properties().apply {
+    val f = rootProject.file("local/tv-manager.properties")
+    if (f.exists()) f.inputStream().use { load(it) }
+}
+val tvUrl = tvProps.getProperty("baseUrl", "").trimEnd('/')
+val tvToken = tvProps.getProperty("enrollToken", "")
+val tvHost = tvUrl.takeIf { it.isNotEmpty() }?.let { runCatching { URI(it).host }.getOrNull() }.orEmpty()
+
+// The shipped network config is HTTPS-everywhere with two carve-outs, and targetSdk 34 means
+// Android 7+ refuses cleartext to anything not listed. A home NAS over http is exactly that case,
+// so the config is generated per machine: the upstream one copied verbatim, plus one cleartext
+// domain for this household's host only. Generating it keeps the address out of the repository
+// and keeps the carve-out narrower than a base-config would.
+val tvResDir = layout.buildDirectory.dir("generated/tvmanager/res")
+val tvBaseXml = file("src/main/res/xml/network_security_config.xml")
+val tvNetworkTask = tasks.register("generateTvManagerNetworkConfig") {
+    // Everything the action needs is resolved here, at configuration time, into plain
+    // String/File values: a doLast closure that touches a script-level val instead captures the
+    // whole build script object, which the configuration cache refuses to serialize.
+    val baseFile = file("src/main/res/xml/network_security_config.xml")
+    val outDir = tvResDir.get().asFile
+    val host = tvHost
+    inputs.file(baseFile)
+    inputs.property("tvHost", host)
+    outputs.dir(outDir)
+    doLast {
+        val out = outDir.resolve("xml")
+        out.mkdirs()
+        val extra = if (host.isEmpty()) "" else """
+    <!-- Generated for this household: the local tv-manager (screen-time backend) is served over
+         http on the LAN. Only this one host may speak cleartext; nothing else changes. -->
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">${host}</domain>
+    </domain-config>
+"""
+        out.resolve("tv_manager_network.xml").writeText(
+            baseFile.readText().replace("</network-security-config>", extra + "</network-security-config>"))
+        logger.lifecycle("tv-manager network config: cleartext host = " + (host.ifEmpty { "none (no local/tv-manager.properties)" }))
+    }
+}
+tasks.named("preBuild") { dependsOn(tvNetworkTask) }
 
 android {
     namespace = "app.orchard.tv"
@@ -25,6 +71,8 @@ android {
         // see system/DiagLog.kt.
         val diag = project.hasProperty("diag")
         buildConfigField("boolean", "DIAG", diag.toString())
+        buildConfigField("String", "TV_MANAGER_URL", "\"$tvUrl\"")
+        buildConfigField("String", "TV_MANAGER_TOKEN", "\"$tvToken\"")
         if (diag) versionNameSuffix = "-diag"
     }
 
@@ -70,6 +118,10 @@ android {
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             signingConfig = signingConfigs.findByName("aerial") ?: signingConfigs.getByName("debug")
         }
+    }
+
+    sourceSets {
+        getByName("main").res.srcDir(tvResDir)
     }
 
     compileOptions {
