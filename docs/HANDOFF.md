@@ -2,6 +2,19 @@
 
 写给接手 Aerial 的人或 AI。先读这份，再读 [ARCHITECTURE.md](ARCHITECTURE.md) 和 [devices/](devices/)。
 
+## 现状（2026-11-24，本机）
+
+- **跟主线到 2.18，本户 2.18.1（versionCode 164）已登记、启用并强制（本机）**：主人问「官网有没有升级」，查出来官网 11-23 到 11-24 连发两轮——2.17=161、2.18=163（Lite 1.40/42 → 1.41/43），测试包还占过 162；主人说「跟进升级」，这轮从变基一路做到发布。33 个户内提交整段变基到官方 tag `v2.18`（`git rebase --onto v2.18 v2.16 main`；原 `Household 2.13.1 (155): sync mainline…` 那个提交取了上游版本号后没有任何内容，git 自动丢弃 → 链上 33 个，加改号提交 34）。
+  - **号**：`versionName = "2.18.1"`、`versionCode = 164`——官网已用到 163（外加测试包 162），按「取比官网已用号段更大」；本户库里上一个号是 160。下次发版 **≥ 165**，Lite **≥ 44**。
+  - **Lite 本轮本户没改**，跟官网到 **1.41（43）**。
+  - **冲突只有老热点**：`docs/HANDOFF.md` 三处（be5a2f3 整块「两侧都留、本户段在上」；f694475 两处取上游侧——本户段已在顶部不重复插、11-22 段验证行取上游更新版「现在已装正式版 159」；5fdb12d 取上游侧保住新加的 11-24/11-23 段）；`app/build.gradle.kts` 取上游号、号在下一个提交重切。手机页、`MainActivity`、`HomeGuardService`、`Updates.kt` 这轮上游改动没与本户撞车，全部自动合上。
+  - **变基后机器核过**：49 个文件逐个比「本户相对官网的净改动内容行」，**48 个逐行一致**，只有 `app/build.gradle.kts` 差版本号 4 行（159/2.16 → 163/2.18，本户行一字不差）。合并点符号全在位：`ScreenTime.walkPolicies/pendingBlock/forceLockFromBackend`、`pressHomeForLimit`、`bringAerialBack`、`stime_lock`、`isInteractive` 待机修复、`TV_MANAGER_URL`/`TOKEN`；官网这轮新加的 `canSleep`/`sleep()`、`WhaleyBoot.turnOffPowerLight`、#1689 的 `handedFrom` 记账、`BootOpen.due` 判定也都在。五语 `st_` key 各 **94** 个齐全。
+  - **这轮带来的官网内容**（挑和本户有关的）：**#1689 后续**（升级后的延迟接管先看本进程见过的窗口再问 usage stats、息屏不接管——正对本户后台强制升级链路）、**#1725 #1742 开机 App 不再被顶回**（`BootOpen.due` 为假不走「唤醒后 Aerial 在前台」那条）、**#1530 索尼静音状态跟着刷新**（家里 Sony 相关）、#1724 #1720 儿童模式密码退出结束休息、#1738 小米 MTK 提早拉回、#1739 未来日期桶、#1713 海信磁贴去内框、#1727/#1722 脚本（本户走不到）、2.18 的 #1658 大时钟 GLES2 CPU 绘制、#1748 文件夹滚动、#1624 微鲸 CEC。**没逐台真机验官网新功能**（家里只有 Sony / 三星「BlueStacks」，走不到微鲸、中兴、创维那些路径）。
+  - **验证**：standard、guard release 单测各 **356 个 / 0 失败**（比上轮 343 多 13 个，是官网新增的测试；跑前照旧把 `local/tv-manager.properties` 和 `.env` 改名断开 NAS，构建 release 前已恢复）；`:lite:lintRelease` 通过；两个包 `publish-apk.sh --no-build --check` 过（包名 / 签名 / 三段文件名 / sha256 / dex 里后端 host+token 全好）：standard 3,289,181 B（sha256 053f366c…）、guard 3,289,151 B（1d31ebb2…）。
+  - **发布**：`rel-164s` 登记 + `release/enable` + 立刻 `release/forced`；`rel-164g` 只登记未启用（两台都是 standard）。回查 `GET /api/stime/releases`：`current.standard = rel-164s`、enabled + forced ✅。**postcheck 164**：两台都**离线**，脚本按设计判 OK 并列出「上线自愈」——**下次开机后要看它们带 164 心跳回来**；没见 `installed` 就按保底 `BUILD=1 KEEP_ADB=1 TV=$SONY_TV tools/install.sh`。
+  - **电视侧**：后台记的两台还停在 **151**（离线没刷新心跳；电视上实际装的是 160，11-22 那轮记过）。开机后从 160 跨到 164，同签名 e089…6685，历史上 136→151、151→160 这种跨版覆盖装成功过。
+  - **git**：变基前打了备份 tag `pre-rebase-218`（= 5fdb12d）；`main` 已 `--force-with-lease` 推 `origin` 和 `gogs` 两个远端。
+
 ## 现状（2026-11-22，本机）
 
 - **跟主线到 2.16，本户 2.16.1（versionCode 160）已登记、启用并强制（本机）**：主人问「有没有更新、要不要升级」，查出来官网 11-21 到 11-22 又连发三轮——2.14=156、2.15=157、2.16=159（Lite 1.37/39 → 1.39/41），官网测试包还占过 155、158；主人说「一起」，这轮从变基一路做到发布。31 个户内提交整段变基到官方 tag `v2.16`（`git rebase --onto v2.16 v2.13 main`）。
