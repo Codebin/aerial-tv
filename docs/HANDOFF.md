@@ -2,6 +2,19 @@
 
 写给接手 Aerial 的人或 AI。先读这份，再读 [ARCHITECTURE.md](ARCHITECTURE.md) 和 [devices/](devices/)。
 
+## 现状（2026-11-27，本机）
+
+- **跟主线到 2.21，本户 2.21.1（versionCode 171）已登记、启用、没强制（本机）**：主人问「检查更新内容」，查出来官网 11-25 到 11-27 连发三轮——2.19=165、2.20=168、2.21=170（测试包还占过 164/167/169），Lite 1.41/43 → 1.43/45；主人说「你更新上去，用户会手工升级」，这轮从变基做到启用，**不设强制**，让电视上自己点升级。34 个户内提交整段变基到官方 tag `v2.21`（`git rebase --onto v2.21 v2.18 main`）。
+  - **号**：`versionName = "2.21.1"`、`versionCode = 171`——官网已用到 170（外加测试包 164/167/169），按「取比官网已用号段更大」；本户库里上一个号是 164。下次发版 **≥ 172**，Lite **≥ 46**。
+  - **Lite 本轮本户没改**，跟官网到 **1.43（45）**，`lite/` 与 tag `v2.21` 逐字节一致。
+  - **冲突只有老热点**：`docs/HANDOFF.md` 一处（11-12 那段：两侧都留、本户段在上，补回两段之间少的那个空行）；`app/build.gradle.kts` 取上游号、号在下一个提交重切。`AndroidManifest`、`HomeViewModel`、`MainActivity`、`ConfigReceiver`、`HomeGuardService`、`ControlCenter`、`HomeScreen`、`docs/ARCHITECTURE.md`、`tools/install.sh` 这轮上游改动没与本户撞车，全部自动合上。
+  - **变基后机器核过**：49 个文件逐个比「本户相对官网的净改动内容行」，**48 个逐行一致**，只有 `app/build.gradle.kts` 差版本号 4 行（170/2.21 → 171/2.21.1，本户行一字不差）。反向也核了：两边都改过的四个文件里「被删的上游行」数量和变基前一模一样（AndroidManifest 1、`HomeGuardService` 7、`ControlCenter` 5、`install.sh` 3 行），**没有一行官网这轮新加的代码被本户盖掉**。合并点符号全在位：`ScreenTime.walkPolicies/pendingBlock/forceLockFromBackend`、`pressHomeForLimit`、`bringAerialBack`、`stime_lock`、`isInteractive` 待机修复、`TV_MANAGER_URL`/`TOKEN`；官网这轮新加的 `AerialGuardUsage` 线程、`isUserUnlocked`、`dueAfterMissedWake`、`in_app_only`、cultraview 信号源也都在。五语 `st_` key 各 **94** 个齐全。
+  - **这轮带来的官网内容**（挑和本户有关的）：**#1789 待机一晚后视频壁纸卡住**（`HomeViewModel.screenOff` 停影片、`afterSleep` 跳回循环里同一点——家里两台都会待机）、**#1788 用户解锁前不读设置**（`onWindowFocusChanged` 只在 `realStarted` 后走、守护 `BootOpen.dueAfterMissedWake` 加 `isUserUnlocked`，修「开机崩一次」——本户的 tv-manager 心跳和屏幕时间都在启动时读设置）、**#1783 守护查使用记录挪出主线程**（`AerialGuardUsage`，和本户 tickLoop 是同一条 usage stats 路）、#1782 个性化说明跟着焦点、#1776/#1754/#1755 设置页返回焦点落位、#1759 #1485 #1517 Amlogic 只在 App 内取帧、#1766 密码面板圈住焦点、#1618 #1602 诊断记守护有没有接住主页键。**走不到的**：#1787 创维 AI 桌面、#1712 Cultraview、#1752 小米背光、#1762 TCL Google TV、#1781 TCL 诊断、install.sh 的海信 `persist.sys.boot.source_pkg`（家里只有 Sony KD-65X9500H / 三星 SM-G998B）。**没逐台真机验官网新功能**。
+  - **验证**：standard、guard release 单测各 **356 个 / 0 失败**（和上轮同数——官网这三版没加新单测）；`:lite:assembleRelease`、`:lite:lintRelease` 通过；跑测试前照旧把 `local/tv-manager.properties` 和 `.env` 改名断开 NAS，构建 release 前已恢复。两个包 `publish-apk.sh --no-build --check` 过（包名 / 签名 / 三段文件名 / sha256 / dex 里后端 host+token 全好）：standard 3,295,012 B（sha256 f6a6cddb…）、guard 3,294,941 B（3ef20fe0…），签名仍是 e089…6685。
+  - **发布**：`rel-171s` 登记 + `release/enable`，**没点强制**（主人 2026-11-27 定：用户会手工升级）；`rel-171g` 只登记未启用（两台都是 standard）。回查 `GET /api/stime/releases`：`current.standard = rel-171s`、enabled、forced=false ✅，`rel-164s` 自动退休。**postcheck 171**：两台都**离线**，脚本按设计判 OK 并列出「上线自愈」——开机后电视会收到 171 的 offer，家人在控制中心点「下载并安装」才装；心跳一回来就算「发完没死」。
+  - **电视侧**：后台记的两台还停在 **151**（离线没刷新心跳；电视上实际装的是 164）。开机后会跨到 171，同签名 e089…6685，历史上 136→151、151→160、160→164 这种跨版覆盖装成功过。
+  - **git**：变基前打了备份 tag `pre-rebase-221`（= 68dfb3c）；`main` 已 `--force-with-lease` 推 `origin` 和 `gogs` 两个远端。
+
 ## 现状（2026-11-24，本机）
 
 - **跟主线到 2.18，本户 2.18.1（versionCode 164）已登记、启用并强制（本机）**：主人问「官网有没有升级」，查出来官网 11-23 到 11-24 连发两轮——2.17=161、2.18=163（Lite 1.40/42 → 1.41/43），测试包还占过 162；主人说「跟进升级」，这轮从变基一路做到发布。33 个户内提交整段变基到官方 tag `v2.18`（`git rebase --onto v2.18 v2.16 main`；原 `Household 2.13.1 (155): sync mainline…` 那个提交取了上游版本号后没有任何内容，git 自动丢弃 → 链上 33 个，加改号提交 34）。
