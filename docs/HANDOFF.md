@@ -2,6 +2,14 @@
 
 写给接手 Aerial 的人或 AI。先读这份，再读 [ARCHITECTURE.md](ARCHITECTURE.md) 和 [devices/](devices/)。
 
+## 现状（2026-11-28，本机）
+
+- **Sony 装成 2.21.1（171）——顺带纠正昨天的一处推测**：主人「查看更新内容」，查出官网还停在 v2.21（本户 2.21.1 就是最新主线），但 Sony 上线后上报的是 **2.1.1（151）**：`adb shell dumpsys package` 也是 `versionCode=151`。也就是说 11-22 的 160、11-24 的 164 两次**强制升级都没在这台装成**——Android 10 的安装页要有人按一次「确定」，11-19 就有 `backed_out` 的先例；昨天段落里那句「电视上实际装的是 164」是推测，**实际一直是 151**。**教训：发版后要回查设备上报的 `appVersion`/`versionCode`，不能只看 `postcheck` 的「离线自愈」就认为电视已经在新版上。**
+  - 主人上一轮说「开 adb 升级」，昨晚电视在待机（adb、53579/8008 控制口全无响应，NAS 容器里的 adb 也连成 `offline`），今晚醒着、adb 通，就按保底装了：`export JAVA_HOME=/opt/homebrew/opt/openjdk@17 && source local/tvs.env && BUILD=1 KEEP_ADB=1 TV=$SONY_TV tools/install.sh`（不带 JAVA_HOME 时脚本会退回系统的 `java_home -v 17` 并报「Unable to locate a Java Runtime」）。**跨 20 个 versionCode 一次覆盖装上**（151→171，同签名 e089…6685）。
+  - 备份：`local/backups/tv/20261128-211456-BRAVIA-4K-UR3-151.apk`（电视上跑好的那一份，退回有路）。编译档 `status=speed`（这台没有 .dm，和 11-08 装 124 那轮一样是系统后台编的）。
+  - 验证：心跳 21:18 带回 **2.21.1（171）**、今天已计 199 分钟（屏幕时间在跑）；守护已绑定（`dumpsys accessibility` 里 `label=app.orchard.tv.guard.Ho…`）；crash buffer 里 0 条 Aerial；前台仍是 `io.leancast`（投屏 App）没被刚装完的 Aerial 顶掉——正是官网 #1689 那条的行为。
+  - **三星 SM-G998B 仍在 151**、11-20 16:10 起没上线（本机 BlueStacks 没在跑），主人说先不动它；它一开机也会收到 171 的 offer（这轮**未强制**，要有人在控制中心点「下载并安装」）。
+
 ## 现状（2026-11-27，本机）
 
 - **跟主线到 2.21，本户 2.21.1（versionCode 171）已登记、启用、没强制（本机）**：主人问「检查更新内容」，查出来官网 11-25 到 11-27 连发三轮——2.19=165、2.20=168、2.21=170（测试包还占过 164/167/169），Lite 1.41/43 → 1.43/45；主人说「你更新上去，用户会手工升级」，这轮从变基做到启用，**不设强制**，让电视上自己点升级。34 个户内提交整段变基到官方 tag `v2.21`（`git rebase --onto v2.21 v2.18 main`）。
